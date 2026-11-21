@@ -75,22 +75,22 @@
         <div class="menu-group" data-menu="mood">
           <button id="menu-btn-mood" type="button" class="menu-trigger">Mood</button>
           <div class="menu-dropdown" role="menu">
-            <button id="menu-mood-pa" type="button" class="menu-item" data-action="set-mood" data-mood="passive-aggressive">
+            <button id="menu-mood-pa" type="button" class="menu-item is-active" role="menuitemradio" aria-checked="true" data-action="set-mood" data-mood="passive-aggressive">
               <span>😒 Passive-Aggressive</span><span class="menu-shortcut">Default</span>
             </button>
-            <button id="menu-mood-dramatic" type="button" class="menu-item" data-action="set-mood" data-mood="dramatic">
+            <button id="menu-mood-dramatic" type="button" class="menu-item" role="menuitemradio" aria-checked="false" data-action="set-mood" data-mood="dramatic">
               <span>😤 Dramatic</span><span class="menu-shortcut">Crisis</span>
             </button>
-            <button id="menu-mood-intellectual" type="button" class="menu-item" data-action="set-mood" data-mood="intellectual">
+            <button id="menu-mood-intellectual" type="button" class="menu-item" role="menuitemradio" aria-checked="false" data-action="set-mood" data-mood="intellectual">
               <span>🧐 Intellectual</span><span class="menu-shortcut">Citations</span>
             </button>
-            <button id="menu-mood-sad" type="button" class="menu-item" data-action="set-mood" data-mood="sad">
+            <button id="menu-mood-sad" type="button" class="menu-item" role="menuitemradio" aria-checked="false" data-action="set-mood" data-mood="sad">
               <span>😢 Sad</span><span class="menu-shortcut">Rain</span>
             </button>
-            <button id="menu-mood-angry" type="button" class="menu-item" data-action="set-mood" data-mood="angry">
+            <button id="menu-mood-angry" type="button" class="menu-item" role="menuitemradio" aria-checked="false" data-action="set-mood" data-mood="angry">
               <span>😡 Angry</span><span class="menu-shortcut">Scrambler</span>
             </button>
-            <button id="menu-mood-supportive" type="button" class="menu-item" data-action="set-mood" data-mood="supportive">
+            <button id="menu-mood-supportive" type="button" class="menu-item" role="menuitemradio" aria-checked="false" data-action="set-mood" data-mood="supportive">
               <span>🥰 Supportive</span><span class="menu-shortcut">10s Rare</span>
             </button>
           </div>
@@ -239,13 +239,25 @@
       <footer class="status-bar" aria-label="Status Bar">
         <div class="status-left">
           <div class="face-badge" title="YapPad Live Expression">
-            <svg id="yappad-face" width="22" height="22" viewBox="0 0 24 24" aria-label="YapPad Face">
-              <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <svg id="yappad-face" width="22" height="22" viewBox="0 0 24 24" role="img" aria-label="YapPad Face: Passive-Aggressive (Stage 0/4)" data-anim="none">
+              <circle cx="12" cy="12" r="10" class="face-head" fill="none" stroke="currentColor" stroke-width="1.6" />
+              <ellipse id="face-blush-left" class="face-blush" cx="6.2" cy="14.2" rx="1.7" ry="0.9" hidden />
+              <ellipse id="face-blush-right" class="face-blush" cx="17.8" cy="14.2" rx="1.7" ry="0.9" hidden />
               <line id="brow-left" x1="6.5" y1="7.5" x2="10" y2="8.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
               <line id="brow-right" x1="14" y1="8.2" x2="17.5" y2="7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-              <circle id="pupil-left" cx="8.5" cy="10.5" r="1.4" fill="currentColor" />
-              <circle id="pupil-right" cx="15.5" cy="10.5" r="1.4" fill="currentColor" />
-              <path id="face-mouth" d="M 8 16 Q 12 15.2 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+              <circle id="pupil-left" class="face-pupil" cx="8.5" cy="10.5" r="1.4" fill="currentColor" />
+              <circle id="pupil-right" class="face-pupil" cx="15.5" cy="10.5" r="1.4" fill="currentColor" />
+              <g id="face-monocle" class="face-monocle" hidden>
+                <circle cx="15.5" cy="10.5" r="2.7" />
+                <path d="M 18.1 11.2 Q 19.6 14.0 18.8 17.5" />
+              </g>
+              <path id="face-tear" class="face-tear" d="M 17.6 12.6 C 18.5 13.9 18.6 15.0 17.6 15.3 C 16.6 15.0 16.7 13.9 17.6 12.6 Z" hidden />
+              <g id="face-anger-vein" class="face-anger-vein" hidden>
+                <path d="M 17.2 3.8 Q 18.3 5.0 19.4 4.0" />
+                <path d="M 19.5 5.9 Q 18.3 5.4 19.4 7.0" />
+                <path d="M 16.4 5.8 Q 17.5 5.6 16.6 6.9" />
+              </g>
+              <path id="face-mouth" d="M 8 16 Q 12 15.2 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </div>
           <span id="status-message" class="status-message">Oh. You again.</span>
