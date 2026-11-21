@@ -78,7 +78,7 @@
       if (centerCardEl === card) centerCardEl = null;
     });
 
-    let fixFlip = 1;
+    let fixFlip = -1;
     const dodgeFix = () => {
       fixFlip = fixFlip === 1 ? -1 : 1;
       fixBtn.style.transform = `translateX(${-46 * fixFlip}px)`;
@@ -117,6 +117,7 @@
     const card = document.createElement('div');
     card.className = 'corner-stalker-card';
     card.setAttribute('data-corner', CORNERS[cornerIndex]);
+    card.setAttribute('data-dodges-left', String(dodgesLeft));
 
     const token = escapeHTML(issue.token || 'syntax');
     const msg = escapeHTML(issue.message || `I'm going to hop corners until you fix "${issue.token || 'that'}".`);
@@ -143,6 +144,7 @@
     closeBtn.addEventListener('mouseenter', () => {
       if (dodgesLeft > 0) {
         dodgesLeft -= 1;
+        card.setAttribute('data-dodges-left', String(dodgesLeft));
         closeBtn.title = dodgesLeft > 0 ? `Too slow! (${dodgesLeft} dodges left)` : 'Fine, click me';
         hopCorner();
       }
@@ -151,6 +153,7 @@
     closeBtn.addEventListener('click', () => {
       if (dodgesLeft > 0) {
         dodgesLeft -= 1;
+        card.setAttribute('data-dodges-left', String(dodgesLeft));
         hopCorner();
         return;
       }
@@ -186,6 +189,7 @@
     card.style.top = `${128 + slot * 78}px`;
     card.style.right = `${285 + (slot % 2) * 34}px`;
     card.style.transform = `scale(${SHRINK_STEPS[0]})`;
+    card.setAttribute('data-scale', String(SHRINK_STEPS[0]));
 
     const token = escapeHTML(issue.token || 'typo');
     card.innerHTML = `
@@ -197,25 +201,34 @@
     `;
 
     const pctEl = card.querySelector('.shrink-pct');
+    let intervalTimer = null;
     const stepShrink = () => {
       if (stepIndex < SHRINK_STEPS.length - 1) {
         stepIndex += 1;
         const scale = SHRINK_STEPS[stepIndex];
         card.style.transform = `scale(${scale})`;
+        card.setAttribute('data-scale', String(scale));
         if (pctEl) pctEl.textContent = `${Math.round(scale * 100)}%`;
         if (Audio) Audio.playShrinkSqueak();
+        if (stepIndex >= SHRINK_STEPS.length - 1 && intervalTimer !== null) {
+          clearInterval(intervalTimer);
+          intervalTimer = null;
+        }
       }
     };
 
     const initialTimer = setTimeout(stepShrink, 550);
-    const intervalTimer = setInterval(stepShrink, 1350);
+    intervalTimer = setInterval(stepShrink, 1350);
     const entry = { el: card, initialTimer, intervalTimer };
     shrinkingCards.push(entry);
 
     card.addEventListener('mouseenter', stepShrink);
     card.querySelector('.ragebait-close-x').addEventListener('click', () => {
       clearTimeout(initialTimer);
-      clearInterval(intervalTimer);
+      if (intervalTimer !== null) {
+        clearInterval(intervalTimer);
+        intervalTimer = null;
+      }
       card.remove();
       const idx = shrinkingCards.indexOf(entry);
       if (idx !== -1) shrinkingCards.splice(idx, 1);

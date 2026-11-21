@@ -927,7 +927,7 @@
             : 'Deleting again? This is becoming a pattern.';
           addCommentary(line, { tag: `🗑️ Backspace #${state.backspaces}` });
           if (root.YP.Ragebait) {
-            root.YP.Ragebait.showCenterRagebait({
+            root.YP.Ragebait.onMistake({
               token: `Backspace ×${state.backspaces}`,
               message: line
             });
