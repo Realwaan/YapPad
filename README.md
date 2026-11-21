@@ -1,4 +1,8 @@
-# 📝 YapPad
+<p align="center">
+  <img src="assets/yappad.png" alt="YapPad Logo" width="140" />
+</p>
+
+# YapPad
 > *A zero-dependency web text editor that judges everything you type in real time and escalates into full ragebait chaos.*
 
 ---
@@ -43,6 +47,8 @@ YapPad/
 ├── index.html          # App shell, menus, telemetry ribbon, backdrop/textarea, SVG face, overlays
 ├── styles.css          # Mood & escalation tokens, pixel-synced --editor-font-size, rain/sparkles, ragebait cards
 ├── server.mjs          # Zero-dependency Node HTTP static server (127.0.0.1:3456) with path-traversal guard
+├── assets/
+│   └── yappad.png      # Official YapPad brand logo (titlebar, favicon, About modal)
 ├── js/
 │   ├── audio.js        # Procedural Web Audio synthesizer (17 sound effects, zero external audio files)
 │   ├── moods.js        # 6 moods, dialogue pools, ghostwriting scripts, fake citations, SVG face states

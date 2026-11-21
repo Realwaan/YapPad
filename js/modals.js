@@ -1366,12 +1366,26 @@
 
   function openAboutModal() {
     open({
-      title: '📝 About YapPad',
+      title: 'About YapPad',
       dismissible: true,
       bodyHTML: `
-        <p class="modal-paragraph">
-          <em>"We built a notepad. It works perfectly. It just hates you."</em>
-        </p>
+        <div class="about-brand-hero">
+          <img
+            class="about-logo"
+            src="assets/yappad.png"
+            alt="YapPad Logo"
+            width="84"
+            height="84"
+            decoding="async"
+            draggable="false"
+          />
+          <div class="about-brand-copy">
+            <div class="about-brand-name">YapPad</div>
+            <p class="about-brand-tagline">
+              <em>"We built a notepad. It works perfectly. It just hates you."</em>
+            </p>
+          </div>
+        </div>
         <p class="modal-paragraph">
           YapPad is a zero-dependency web text editor with real-time 0ms orthographic shaming, procedural Web Audio synthesis, 6 shifting moods, AI roasting, and escalating ragebait overlays.
         </p>

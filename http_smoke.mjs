@@ -45,6 +45,21 @@ try {
     assert.ok(body.length > 10, `Expected non-empty body for ${p}`);
   }
 
+  const logoRes = await fetch(`${baseUrl}/assets/yappad.png`);
+  assert.equal(logoRes.status, 200, `Expected HTTP 200 for /assets/yappad.png, got ${logoRes.status}`);
+  assert.equal(
+    logoRes.headers.get('content-type'),
+    'image/png',
+    'Expected image/png Content-Type for /assets/yappad.png'
+  );
+  const logoBytes = new Uint8Array(await logoRes.arrayBuffer());
+  assert.ok(logoBytes.length > 1024, 'Expected non-empty PNG payload for /assets/yappad.png');
+  assert.deepEqual(
+    Array.from(logoBytes.slice(0, 4)),
+    [0x89, 0x50, 0x4e, 0x47],
+    'Expected valid PNG magic bytes for /assets/yappad.png'
+  );
+
   const blockedPaths = [
     '/../',
     '/../etc/passwd',
