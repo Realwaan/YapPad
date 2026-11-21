@@ -43,11 +43,31 @@ assert.ok(!xssHTML.includes('<script>'), 'renderBackdropHTML must escape <script
 assert.ok(xssHTML.includes('&lt;script&gt;'), 'renderBackdropHTML must contain escaped script entity');
 
 // 3. Instant mid-typing detection (cursorPos === text.length, no trailing space)
-const mustFireInstant = ['teh', 'sooo', 'We could of', 'the the', 'Hello. w', 'notpad'];
+const mustFireInstant = [
+  'teh',
+  'sooo',
+  'We could of',
+  'should of',
+  'your welcome',
+  'the the',
+  'Hello. w',
+  'notpad',
+  'definately',
+  'recieve',
+  'seperate',
+  'occured',
+  'bcdf',
+  'qir',
+  'Hello  world',
+  'I tried, it is fine'
+];
 for (const sample of mustFireInstant) {
   const res = YP.Grammar.analyze(sample, { cursorPos: sample.length, instant: true });
   assert.ok(res.length >= 1, `Expected instant 0ms issue for "${sample}", got 0`);
 }
+
+const cleanWelcome = YP.Grammar.analyze("You're welcome.", { cursorPos: 15, instant: true });
+assert.equal(cleanWelcome.length, 0, `Expected 0 issues on "You're welcome.", got: ${JSON.stringify(cleanWelcome)}`);
 
 const mustStaySilentMidWord = ['delet', 'notep', 'qu', 'in', 'Hello. W'];
 for (const prefix of mustStaySilentMidWord) {
@@ -69,5 +89,31 @@ const intelRoast = YP.AI.generateOfflineRoast(
   { wpm: 38, backspaces: 4, errors: 2 }
 );
 assert.ok(intelRoast.includes('(') && intelRoast.includes(')'), 'Intellectual offline roast must include a fake citation');
+
+// 5. All 13 procedural Web Audio cues exist and safely no-op in Node (enabled and muted)
+const audioCues = [
+  'playSigh',
+  'playDisappointmentDing',
+  'playPanicPip',
+  'playGuiltPop',
+  'playOrchestralSting',
+  'playSuspenseMusic',
+  'playSadViolin',
+  'playAngryBuzz',
+  'playSupportiveChime',
+  'playRoastPop',
+  'playRageBuzzer',
+  'playCornerZip',
+  'playShrinkSqueak'
+];
+for (const cue of audioCues) {
+  assert.equal(typeof YP.Audio[cue], 'function', `Missing YP.Audio.${cue}`);
+  assert.doesNotThrow(() => YP.Audio[cue](), `YP.Audio.${cue} threw in Node`);
+}
+YP.Audio.setEnabled(false);
+for (const cue of audioCues) {
+  assert.equal(YP.Audio[cue](), false, `Muted YP.Audio.${cue} should return false`);
+}
+YP.Audio.setEnabled(true);
 
 console.log('ALL_UNIT_CHECKS_PASSED');
