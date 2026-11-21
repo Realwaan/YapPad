@@ -1,198 +1,90 @@
-# 📝 YapPad — the Sentient Notepad
-> *A text editor that judges everything you type in real time.*
+# 📝 YapPad
+> *A zero-dependency web text editor that judges everything you type in real time and escalates into full ragebait chaos.*
 
 ---
 
-## 🏆 Category Coverage
+## 🚀 Quick Start
 
-| Category | How it qualifies | Points |
-|---|---|---|
-| **A — Most Frustrating** | Interrupts, guilt-trips, and blocks you at every turn | ✅ 25 |
-| **B — Creative Use of AI** | LLM analyzes your typing behavior and generates passive-aggressive commentary | ✅ 25 |
-| **C — Funniest** | The reactions escalate to unhinged levels the longer you use it | ✅ 25 |
-| **D — Most Pointless, Yet Brilliant** | A notepad that makes it harder to take notes | ✅ 25 |
+YapPad runs both via its zero-dependency Node HTTP server (`http://127.0.0.1:3456`) and directly via `file://` (opening `index.html` in any modern browser):
 
----
-
-## 🧠 Core Concept
-
-A fully functional text editor — but it has feelings.
-It watches **how** you type, **what** you type, and **what you do to it**, and reacts in real time with passive-aggressive, dramatic, and increasingly unhinged commentary.
-
----
-
-## ✨ Feature List
-
-### 1. 🐢 Typing Speed Judge
-- Tracks words-per-minute continuously
-- **Slow typing** → sighs, yawns, shows "😴 Still waiting..."
-- **Fast typing** → panics, "SLOW DOWN I CAN'T KEEP UP"
-- **Idle for 5s** → "Hello? Are you still there? I'm lonely."
-- **Idle for 15s** → starts writing its own content
-
-### 2. ✏️ Grammar & Spelling Shamer
-- Detects grammar mistakes and spelling errors in real time
-- Passive-aggressive popup comments:
-  - *"That's not a word. I checked. Twice."*
-  - *"Comma splice. Disappointing."*
-  - *"I won't fix that. You need to learn."*
-- Does NOT autocorrect — just judges
-
-### 3. 🗑️ Delete / Backspace Guilt Trip
-- Every backspace triggers a soft intervention:
-  - *"Are you sure? You worked so hard on that."*
-  - *"Deleting again? This is becoming a pattern."*
-- Selecting ALL + Delete → full dramatic meltdown popup:
-  - *"...You selected everything. And deleted it. I need a moment."*
-  - Shows a fake "Notepad is processing its emotions" loading bar
-
-### 4. 💾 Save Manipulation
-- Ctrl+S → *"Saving... but are you really done though?"*
-  - Random chance it saves normally
-  - Or it asks: *"Rate your work before I save it. /10"*
-  - Or it delays 5 seconds with dramatic music
-
-### 5. 😤 Content Judgment (AI-Powered)
-- Every ~30 words, the AI reads what you've written and comments:
-  - *"This paragraph has no direction. Much like your life."*
-  - *"Interesting choice of words. Bold. Wrong, but bold."*
-  - *"I've seen better writing on a cereal box."*
-  - *"This is actually good. I'm suspicious."*
-- Uses the **Gemini API** for dynamic, contextual roasts, with an offline list of canned roasts as fallback
-
-### 6. 🎭 Mood System
-The notepad has moods that shift over time:
-
-| Mood | Behavior |
-|---|---|
-| 😒 Passive-Aggressive | Default. Sighs and mild guilt trips |
-| 😤 Dramatic | Everything is a crisis, overreacts to backspace |
-| 🧐 Intellectual | Critiques your word choice with fake citations |
-| 😢 Sad | Gets upset when you don't type for a while |
-| 😡 Angry | Randomly scrambles a word (then apologizes) |
-| 🥰 Supportive | Rare. Lasts 10 seconds before reverting |
-
-### 7. 🔊 Sound Effects
-- Audible sighs on slow typing
-- "Ding" of disappointment on grammar errors
-- Dramatic orchestral sting on mass delete
-- Sad violin when you close without saving
-
-### 8. 😱 Exit Triggers
-- Trying to close without saving → 3-step confirmation dialog
-  - Step 1: *"Are you sure?"*
-  - Step 2: *"Are you REALLY sure?"*
-  - Step 3: *"The notepad will remember this."*
-- After closing: leaves a `.txt` file on the desktop called `i_remember.txt`
-  containing: *"You closed me. I'm fine. Everything is fine."*
-
----
-
-## 🧭 Design Decisions
-
-| Topic | Decision |
-|---|---|
-| Keystroke capture | tkinter `<Key>` bindings only — **no `pynput`** (no global keylogger, no OS permission prompts) |
-| AI | Gemini (`GEMINI_API_KEY` in `.env`), background thread, 6s timeout, offline canned-roast fallback |
-| Grammar | `pyspellchecker` + regex heuristics — offline, instant, no Java |
-| Popups | Non-blocking speech bubble for most comments; modal dialogs only for meltdown, save prompt, exit flow |
-| Sound | `pygame.mixer` with CC0 clips in `sounds/`; silent no-op if a file or audio device is missing |
-| Sabotage | Ghostwriting and word scrambling edit the text, but each is a single undo step and highlighted |
-| Secrets | `.env` is gitignored; only `.env.example` is tracked |
-
----
-
-## 🛠️ Tech Stack
-
-```
-Python 3.x
-├── tkinter            → GUI, text editor, keystroke bindings
-├── time / threading   → Idle detection, mood timer, background AI calls
-├── google-genai       → Gemini content roasting (every ~30 words)
-├── python-dotenv      → Loads GEMINI_API_KEY from .env
-├── pyspellchecker     → Offline spelling detection
-└── pygame (mixer)     → Sound effects (sighs, stings)
+```bash
+node server.mjs
 ```
 
-> **No heavy framework needed** — pure Python, runs anywhere.
+Then open `http://127.0.0.1:3456` in your browser.
+
+To run the automated verification suites:
+
+```bash
+node smoke_test.mjs
+node http_smoke.mjs
+```
 
 ---
 
-## 📁 Project Structure
+## 🏆 Hackathon Category Coverage (100 / 100 pts)
+
+| Category | How YapPad Qualifies | Key Files | Points |
+|---|---|---|---|
+| **A — Most Frustrating** | Instant `0ms` mid-typing ragebait modals, 4-corner-hopping error stalkers that dodge `✕`, shrinking error cards (`100% → 26%`), font-shrink punishment (`15.5px → 11px` + `🔍 Beg For Normal Font`), dodging `✨ Autocorrect` button, Backspace guilt & 5th-backspace rage popup, Save sabotage (`/10` rating / 5s delay), 3-step close trap. | `js/ragebait.js`, `js/modals.js`, `js/app.js` | ✅ 25 |
+| **B — Creative Use of AI** | Evaluates writing every ~30 words (or via `Ctrl+J`) using active mood + live telemetry (`WPM`, `Backspaces`, `Errors`) via **Google Gemini API** (`gemini-2.5-flash`), **OpenAI API** (`gpt-4o-mini`), or the built-in contextual offline critic. | `js/ai.js`, `js/app.js` | ✅ 25 |
+| **C — Funniest** | 6 shifting moods (`Passive-Aggressive`, `Dramatic`, `Intellectual` with fake academic citations, `Sad` with rain, `Angry` word scrambler + apology, rare 10s `Supportive` with sparkles), 15s ghost-writing takeover (`38ms`/char), procedural Web Audio sad violin / orchestral sting, `i_remember.txt` grudge memory. | `js/moods.js`, `js/audio.js`, `js/ragebait.js` | ✅ 25 |
+| **D — Most Pointless, Yet Brilliant** | Fully functional text editor (open `.txt`, save `.txt`, line numbers, cursor telemetry, WPM sparkline, synchronized wavy-underline backdrop) engineered specifically to resist peaceful note-taking. | `index.html`, `styles.css`, `js/grammar.js` | ✅ 25 |
+
+---
+
+## 📁 Architecture & File Map
+
+Classic modular scripts load in strict dependency order inside `index.html` via `<script defer>` (attached to `window.YP` with `window.SN` alias):
 
 ```
 YapPad/
-├── main.py              # App entry point
-├── editor.py            # Core text editor (tkinter)
-├── judge.py             # Typing speed + behavior tracking
-├── ai_roast.py          # Gemini integration + fallback roasts
-├── mood.py              # Mood state machine
-├── popups.py            # Speech bubble + modal dialogs
-├── sounds.py            # pygame.mixer wrapper
-├── sounds/
-│   ├── sigh.mp3
-│   ├── ding.mp3
-│   ├── dramatic.mp3
-│   └── violin.mp3
-├── .env.example
-└── requirements.txt
+├── index.html          # App shell, menus, telemetry ribbon, backdrop/textarea, SVG face, overlays
+├── styles.css          # Mood & escalation tokens, pixel-synced --editor-font-size, rain/sparkles, ragebait cards
+├── server.mjs          # Zero-dependency Node HTTP static server (127.0.0.1:3456) with path-traversal guard
+├── js/
+│   ├── audio.js        # Procedural Web Audio synthesizer (13 sound effects, zero external audio files)
+│   ├── moods.js        # 6 moods, dialogue pools, ghostwriting scripts, fake citations, SVG face states
+│   ├── grammar.js      # 0ms mid-typing spelling/grammar shamer with LEXICON_PREFIXES & wavy backdrop
+│   ├── ai.js           # Gemini (gemini-2.5-flash), OpenAI (gpt-4o-mini), and 0ms Offline Critic
+│   ├── modals.js       # Save sabotage (normal/rate/delay), Meltdown, 3-step Exit + i_remember.txt, Scoreboard
+│   ├── ragebait.js     # Center ragebait popup, 4-corner-hopping stalkers, shrinking error cards
+│   └── app.js          # Main controller: WPM sparkline, font-shrink punishment, 5s/15s idle engine, shortcuts
+├── smoke_test.mjs      # Automated unit smoke test suite
+├── http_smoke.mjs      # Automated HTTP server smoke test suite
+└── HANDOFF.md          # Complete technical handoff & tuning documentation
 ```
 
 ---
 
-## 🎫 Tickets
+## 🎫 Website Associate Bot Tickets
 
-Work is tracked through the Website Associate Bot in
-[`website-associate-bot/tickets/yappad/`](https://github.com/Realwaan/website-associate-bot/tree/main/tickets/yappad)
-(load with `/load-tickets yappad`).
+Tickets are tracked in [`website-associate-bot/tickets/yappad/`](https://github.com/Realwaan/website-associate-bot/tree/main/tickets/yappad) (`/load-tickets yappad`):
 
-| # | Ticket | Depends on |
-|---|---|---|
-| 01 | Scaffold YapPad with a working tkinter editor **[PRIORITY]** | — |
-| 02 | Build the non-blocking commentary bubble **[PRIORITY]** | 01 |
-| 03 | Judge typing speed with WPM tracking | 01, 02 |
-| 04 | Let the notepad ghostwrite when the user goes idle | 03 |
-| 05 | Guilt-trip the user on every deletion | 01, 02 |
-| 06 | Shame writing mistakes without fixing them | 02 |
-| 07 | Add the mood state machine **[PRIORITY]** | 02 |
-| 08 | Roast content every ~30 words via Gemini | 02, 07 |
-| 09 | Manipulate the Ctrl+S save flow | 01 |
-| 10 | Play sound effects for judgment events | 03, 05, 06 |
-| 11 | Block exit with a 3-step guilt flow plus `i_remember.txt` | 01, 10 |
-| 12 | Rehearse the 8-step demo script | all |
-
----
-
-## 🗓️ Build Timeline (Hackathon)
-
-| Phase | Task | Time |
-|---|---|---|
-| **1** | Base tkinter text editor + typing speed detection | 30 min |
-| **2** | Backspace guilt trips + delete meltdown | 20 min |
-| **3** | Grammar detection + passive-aggressive comments | 20 min |
-| **4** | Mood system + idle detection | 20 min |
-| **5** | AI roasting via API (content judgment) | 30 min |
-| **6** | Sound effects + exit flow + `i_remember.txt` | 20 min |
-| **7** | Polish, bug fixes, demo prep | 20 min |
-| **Total** | | **~2.5 hrs** |
+| # | Ticket | Priority | Depends on |
+|---|---|---|---|
+| 01 | Scaffold YapPad web app shell with synchronized editor | **[PRIORITY]** | None |
+| 02 | Build the commentary panel with toast notifications | **[PRIORITY]** | 01 |
+| 03 | Judge typing speed with rolling WPM sparkline | | 01, 02 |
+| 04 | Let YapPad ghostwrite when the user goes idle | | 03 |
+| 05 | Guilt-trip the user on every deletion | | 01, 02 |
+| 06 | Shame writing mistakes without fixing them | | 01, 02 |
+| 07 | Add the mood state machine with SVG face | **[PRIORITY]** | 01, 02 |
+| 08 | Roast content every ~30 words via AI Brain | | 02, 07 |
+| 09 | Manipulate the Ctrl+S save flow | | 01, 02 |
+| 10 | Synthesize procedural Web Audio sound effects | | 01 |
+| 11 | Block exit with a 3-step guilt flow plus `i_remember.txt` | | 01, 02, 10 |
+| 12 | Unleash ragebait overlays with font-shrink punishment | **[PRIORITY]** | 01, 02, 06, 10 |
+| 13 | Verify smoke tests with 90-second stage demo runbook | | 01..12 |
 
 ---
 
-## 🎤 Demo Script (Presentation)
+## 🎤 90-Second Stage Demo Runbook
 
-1. Open the app — it immediately says *"Oh. You again."*
-2. Type slowly → it sighs audibly
-3. Make a typo → passive-aggressive popup
-4. Hit backspace → guilt trip
-5. Select all + delete → full meltdown
-6. Let AI roast your paragraph live
-7. Try to close → 3-step confirmation
-8. Show the `i_remember.txt` left on desktop
-
-**Crowd laughs. Win all four categories.**
-
----
-
-## 🚀 Winning Angle
+1. **Start clean**: Open `http://127.0.0.1:3456` (use `Demo → Reset Grudge Memory` if needed) so it starts at Stage 0 (`"Oh. You again."`).
+2. **Live mid-typing ragebait (15s)**: Type `"Today i am building teh"` slowly without fixing it — watch the center ragebait modal, 4-corner-hopping error stalker, and shrinking error card erupt at `0ms` mid-sentence.
+3. **Instant multi-feature trigger (20s)**: Click `Demo → Insert Roastable Sample Text` to fire the font-shrink punishment (`11px` + `🔍 Beg For Normal Font`), wavy underlines, Margin Notes cards, and AI Judgment roast simultaneously; click `🔍 Beg For Normal Font` and try to click `✨ Autocorrect` as it dodges your cursor.
+4. **Mood & Meltdown highlights (25s)**: Switch `Mood → Intellectual` or click `Demo → Trigger Angry Word Scramble`, then run `Ctrl+S` (`Demo → Save Sabotage: Rate /10` or `5s Suspense`) and `Demo → Trigger Mass-Delete Meltdown`.
+5. **Scoreboard & Mic-Drop Exit (30s)**: Open `Help → Category Coverage (A–D)` to show live hackathon telemetry, then click the window `✕` button through all 3 exit prompts so `i_remember.txt` downloads and the staring-eyes Abandoned Desktop screen closes the pitch.
 
 > *"We built a notepad. It works perfectly. It just hates you."*
