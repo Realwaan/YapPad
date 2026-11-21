@@ -47,6 +47,80 @@
     return document.getElementById(id);
   }
 
+  function ensureTxtFilename(name) {
+    const cleaned = String(name || '').trim() || state.filename || 'untitled_regret.txt';
+    return /\.txt$/i.test(cleaned) ? cleaned : `${cleaned}.txt`;
+  }
+
+  function setDirty(isDirty) {
+    state.dirty = Boolean(isDirty);
+    const docNameEl = el('doc-filename');
+    if (docNameEl) {
+      docNameEl.classList.toggle('is-dirty', state.dirty);
+      docNameEl.setAttribute('data-dirty', state.dirty ? 'true' : 'false');
+      docNameEl.title = state.dirty ? 'Unsaved changes (Ctrl+S to save)' : 'All changes saved';
+    }
+    if (typeof document !== 'undefined') {
+      document.title = `${state.dirty ? '• ' : ''}${state.filename} — YapPad`;
+    }
+  }
+
+  function downloadTextFile(filename, content) {
+    const targetName = ensureTxtFilename(filename);
+    const text = String(content == null ? '' : content);
+    if (typeof document === 'undefined' || typeof Blob === 'undefined' || typeof URL === 'undefined') {
+      return { filename: targetName, bytes: text.length };
+    }
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = targetName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return { filename: targetName, bytes: blob.size };
+  }
+
+  function downloadDocument(filenameOverride) {
+    const textarea = el('editor-textarea');
+    const content = textarea ? textarea.value : '';
+    const result = downloadTextFile(filenameOverride || state.filename, content);
+    state.filename = result.filename;
+    const docNameEl = el('doc-filename');
+    if (docNameEl) docNameEl.textContent = state.filename;
+    setDirty(false);
+    return result;
+  }
+
+  function triggerSaveFlow(forcedMode) {
+    const textarea = el('editor-textarea');
+    const Modals = root.YP.Modals;
+    if (!Modals || typeof Modals.openSaveFlow !== 'function') {
+      const res = downloadDocument();
+      addCommentary(`Saved "${res.filename}" directly.`, { tag: '💾 Saved' });
+      return null;
+    }
+
+    // Do not allow spamming Ctrl+S to bypass an active modal or re-roll save sabotage
+    if (typeof Modals.isOpen === 'function' && Modals.isOpen()) {
+      if (typeof Modals.shakeActiveModal === 'function') {
+        Modals.shakeActiveModal();
+      }
+      if (typeof Modals.getActiveSaveMode === 'function' && Modals.getActiveSaveMode()) {
+        showToast('Nice try. You cannot Ctrl+S your way out of judgment.');
+      }
+      return Modals.getActiveSaveMode ? Modals.getActiveSaveMode() : null;
+    }
+
+    return Modals.openSaveFlow(forcedMode || null, {
+      filename: state.filename,
+      getContent: () => (textarea ? textarea.value : ''),
+      onDownload: downloadTextFile
+    });
+  }
+
   function loadGrudgeState() {
     try {
       if (typeof localStorage !== 'undefined') {
@@ -319,6 +393,7 @@
     const finalWord = scrambled === word ? word.split('').reverse().join('') : scrambled;
 
     textarea.value = text.slice(0, start) + finalWord + text.slice(start + word.length);
+    setDirty(true);
     if (Audio) Audio.playAngryBuzz();
 
     runGrammarCheck(false);
@@ -361,6 +436,7 @@
         return;
       }
       textarea.value += script[idx];
+      if (!state.dirty) setDirty(true);
       idx += 1;
       syncBackdropAndGutter();
       updateLineNumbersAndCounts();
@@ -596,7 +672,7 @@
     state.seenIssueStarts.clear();
 
     textarea.value = SAMPLE_ROASTABLE_TEXT;
-    state.dirty = true;
+    setDirty(true);
     state.lastKeyAt = Date.now();
 
     const issues = runGrammarCheck(false);
@@ -750,6 +826,7 @@
           const docNameEl = el('doc-filename');
           if (docNameEl) docNameEl.textContent = file.name;
           textarea.value = String(reader.result || '');
+          setDirty(false);
           state.seenIssueKeys.clear();
           state.seenIssueStarts.clear();
           runGrammarCheck(true);
@@ -773,6 +850,7 @@
         if (textarea) {
           state.undoSnapshot = textarea.value;
           textarea.value = '';
+          setDirty(false);
           state.seenIssueKeys.clear();
           state.seenIssueStarts.clear();
           runGrammarCheck(false);
@@ -788,12 +866,7 @@
         break;
       }
       case 'file-save':
-        if (Modals) {
-          Modals.openSaveFlow(null, {
-            filename: state.filename,
-            getContent: () => (textarea ? textarea.value : '')
-          });
-        }
+        triggerSaveFlow(null);
         break;
       case 'file-exit':
         if (Modals) {
@@ -810,6 +883,7 @@
         if (textarea && state.undoSnapshot !== null) {
           textarea.value = state.undoSnapshot;
           state.undoSnapshot = null;
+          setDirty(true);
           runGrammarCheck(false);
           updateLineNumbersAndCounts();
           addCommentary('Restored your pre-sabotage text via Undo. You\'re welcome.', { tag: '↩️ Undo' });
@@ -843,20 +917,10 @@
         triggerAngryWordScramble();
         break;
       case 'demo-save-rate':
-        if (Modals) {
-          Modals.openSaveFlow('rate', {
-            filename: state.filename,
-            getContent: () => (textarea ? textarea.value : '')
-          });
-        }
+        triggerSaveFlow('rate');
         break;
       case 'demo-save-delay':
-        if (Modals) {
-          Modals.openSaveFlow('delay', {
-            filename: state.filename,
-            getContent: () => (textarea ? textarea.value : '')
-          });
-        }
+        triggerSaveFlow('delay');
         break;
       case 'demo-meltdown':
         if (Modals) Modals.openMeltdownModal();
@@ -948,7 +1012,7 @@
 
     // Instant 0ms mid-typing grammar/spelling & ragebait check
     textarea.addEventListener('input', () => {
-      state.dirty = true;
+      setDirty(true);
       state.lastKeyAt = Date.now();
       runGrammarCheck(true);
       updateLineNumbersAndCounts();
@@ -957,23 +1021,38 @@
     // Global keyboard shortcuts
     if (typeof window !== 'undefined') {
       window.addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        const key = (e.key || '').toLowerCase();
+        const ctrlOrMeta = e.ctrlKey || e.metaKey;
+        const Modals = root.YP.Modals;
+        const modalOpen = Boolean(Modals && typeof Modals.isOpen === 'function' && Modals.isOpen());
+
+        if (ctrlOrMeta && !e.altKey && key === 's') {
           e.preventDefault();
           handleAction('file-save');
-        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'j') {
+        } else if (key === 'escape') {
+          if (modalOpen) {
+            if (typeof Modals.isDismissible !== 'function' || Modals.isDismissible()) {
+              Modals.closeModal();
+            } else if (typeof Modals.shakeActiveModal === 'function') {
+              Modals.shakeActiveModal();
+            }
+          } else if (root.YP.Ragebait) {
+            root.YP.Ragebait.clearAll();
+          }
+        } else if (modalOpen) {
+          return;
+        } else if (ctrlOrMeta && !e.altKey && key === 'j') {
           e.preventDefault();
           handleAction('ai-roast-now');
-        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
+        } else if (ctrlOrMeta && !e.altKey && key === 'o') {
           e.preventDefault();
           handleAction('file-open');
-        } else if (e.altKey && e.key.toLowerCase() === 'n') {
+        } else if (e.altKey && !ctrlOrMeta && key === 'n') {
           e.preventDefault();
           handleAction('file-new');
-        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && state.undoSnapshot !== null) {
+        } else if (ctrlOrMeta && !e.altKey && key === 'z' && state.undoSnapshot !== null) {
           e.preventDefault();
           handleAction('edit-undo');
-        } else if (e.key === 'Escape') {
-          if (root.YP.Ragebait) root.YP.Ragebait.clearAll();
         }
       });
 
@@ -1010,6 +1089,7 @@
     loadGrudgeState();
     wireMenusAndControls();
     wireEditorEvents();
+    setDirty(false);
     updateAIBadge();
     updateEscalation();
     updateFaceExpression();
@@ -1044,6 +1124,7 @@
   root.YP.App = {
     state,
     init,
+    setDirty,
     setMood,
     runGrammarCheck,
     applyFontShrinkPunishment,
@@ -1057,8 +1138,16 @@
     showToast,
     getTelemetry,
     updateAIBadge,
-    onSaveCompleted(note) {
-      state.dirty = false;
+    downloadTextFile,
+    downloadDocument,
+    saveDocument: triggerSaveFlow,
+    onSaveCompleted(note, meta = {}) {
+      if (meta && meta.filename) {
+        state.filename = ensureTxtFilename(meta.filename);
+        const docNameEl = el('doc-filename');
+        if (docNameEl) docNameEl.textContent = state.filename;
+      }
+      setDirty(false);
       addCommentary(note, { tag: '💾 Saved' });
       showToast(note);
     }

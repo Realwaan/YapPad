@@ -3,31 +3,96 @@
   root.YP = root.YP || {};
   root.SN = root.YP;
 
+  const SAVE_MODES = ['normal', 'rate', 'delay'];
+
   let activeTimer = null;
+  let activeSaveMode = null;
+  let modalDismissible = true;
+
+  function escapeHTML(str) {
+    if (root.YP.Grammar && typeof root.YP.Grammar.escapeHTML === 'function') {
+      return root.YP.Grammar.escapeHTML(str);
+    }
+    return String(str == null ? '' : str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function normalizeTxtFilename(name) {
+    const cleaned = String(name || '').trim() || 'untitled_regret.txt';
+    return /\.txt$/i.test(cleaned) ? cleaned : `${cleaned}.txt`;
+  }
 
   function getOverlay() {
     if (typeof document === 'undefined') return null;
     return document.getElementById('modal-overlay');
   }
 
-  function closeModal() {
+  function isOpen() {
+    const overlay = getOverlay();
+    return Boolean(overlay && !overlay.hidden);
+  }
+
+  function isDismissible() {
+    return modalDismissible;
+  }
+
+  function getActiveSaveMode() {
+    return activeSaveMode;
+  }
+
+  function shakeActiveModal() {
+    const overlay = getOverlay();
+    if (!overlay || overlay.hidden) return;
+    const card = overlay.querySelector('.modal-card');
+    if (!card) return;
+    card.classList.remove('modal-shake');
+    void card.offsetWidth;
+    card.classList.add('modal-shake');
+  }
+
+  function restoreEditorFocus() {
+    if (typeof document === 'undefined') return;
+    const abandoned = document.getElementById('abandoned-screen');
+    if (abandoned && !abandoned.hidden) return;
+    const textarea = document.getElementById('editor-textarea');
+    if (textarea && typeof textarea.focus === 'function') {
+      textarea.focus();
+    }
+  }
+
+  function closeModal(options = {}) {
     if (activeTimer) {
       clearInterval(activeTimer);
       activeTimer = null;
+    }
+    activeSaveMode = null;
+    modalDismissible = true;
+    const Audio = root.YP.Audio;
+    if (Audio && typeof Audio.stopSuspenseMusic === 'function') {
+      Audio.stopSuspenseMusic();
     }
     const overlay = getOverlay();
     if (!overlay) return;
     overlay.hidden = true;
     overlay.innerHTML = '';
+    if (options.restoreFocus !== false) {
+      restoreEditorFocus();
+    }
   }
 
-  function showModalHTML(html) {
+  function showModalHTML(html, opts = {}) {
     const overlay = getOverlay();
     if (!overlay) return null;
     if (activeTimer) {
       clearInterval(activeTimer);
       activeTimer = null;
     }
+    activeSaveMode = null;
+    modalDismissible = opts.dismissible !== false;
     overlay.innerHTML = `<div class="modal-card" role="dialog" aria-modal="true">${html}</div>`;
     overlay.hidden = false;
     return overlay.querySelector('.modal-card');
@@ -35,33 +100,128 @@
 
   function triggerDownload(filename, content) {
     if (typeof document === 'undefined') return;
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const targetName = normalizeTxtFilename(filename);
+    const blob = new Blob([String(content == null ? '' : content)], {
+      type: 'text/plain;charset=utf-8'
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = filename;
+    a.download = targetName;
     document.body.appendChild(a);
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  function evaluateSaveRating(rawInput, filename) {
+    const safeName = normalizeTxtFilename(filename);
+    const trimmed = String(rawInput == null ? '' : rawInput).trim();
+    if (!trimmed) {
+      return {
+        valid: false,
+        value: NaN,
+        error: 'Enter a number from 1 to 10. Leaving it blank will not save you.',
+        verdict: '',
+        highScore: false
+      };
+    }
+
+    const val = Number(trimmed);
+    if (!Number.isFinite(val)) {
+      return {
+        valid: false,
+        value: NaN,
+        error: 'That is not even a number. Pick a score between 1 and 10.',
+        verdict: '',
+        highScore: false
+      };
+    }
+
+    if (!Number.isInteger(val)) {
+      return {
+        valid: false,
+        value: val,
+        error: 'Whole numbers 1 to 10 only. No hiding behind decimals.',
+        verdict: '',
+        highScore: false
+      };
+    }
+
+    if (val < 1 || val > 10) {
+      return {
+        valid: false,
+        value: val,
+        error: 'Pick a number between 1 and 10. Math is not optional.',
+        verdict: '',
+        highScore: false
+      };
+    }
+
+    let verdict;
+    if (val === 10) {
+      verdict = `10/10?! Calling "${safeName}" a masterpiece is clinically bold. Saving it before your ego explodes.`;
+    } else if (val >= 8) {
+      verdict = `You rated this ${val}/10?! Delusional confidence, truly inspiring—fine, saving "${safeName}".`;
+    } else if (val >= 5) {
+      verdict = `${val}/10. At least you know it's aggressively average. Saving "${safeName}".`;
+    } else if (val >= 3) {
+      verdict = `${val}/10. Refreshingly honest self-assessment. Saving "${safeName}" out of pity.`;
+    } else {
+      verdict = `${val}/10?! Brutal honesty. Saving "${safeName}" strictly as a cry for help.`;
+    }
+
+    return {
+      valid: true,
+      value: val,
+      error: '',
+      verdict,
+      highScore: val >= 8
+    };
+  }
+
+  function resolveSaveContent(options) {
+    if (typeof options.getContent === 'function') {
+      return String(options.getContent() || '');
+    }
+    if (typeof options.content === 'string') {
+      return options.content;
+    }
+    if (typeof document !== 'undefined') {
+      const textarea = document.getElementById('editor-textarea');
+      if (textarea) return textarea.value;
+    }
+    return '';
+  }
+
   function openSaveFlow(forcedMode, options = {}) {
     const Audio = root.YP.Audio;
     const App = root.YP.App;
-    const modes = ['normal', 'rate', 'delay'];
-    const mode = modes.includes(forcedMode)
+    const mode = SAVE_MODES.includes(forcedMode)
       ? forcedMode
-      : modes[Math.floor(Math.random() * modes.length)];
+      : SAVE_MODES[Math.floor(Math.random() * SAVE_MODES.length)];
 
-    const filename = options.filename || 'untitled_regret.txt';
-    const content = typeof options.getContent === 'function' ? options.getContent() : (options.content || '');
+    const rawFilename =
+      options.filename || (App && App.state && App.state.filename) || 'untitled_regret.txt';
+    const filename = normalizeTxtFilename(rawFilename);
+    const safeFilename = escapeHTML(filename);
 
-    const finishSave = (note) => {
+    const finishSave = (note, meta = {}) => {
+      const content = resolveSaveContent(options);
       closeModal();
-      triggerDownload(filename, content);
+      if (typeof options.onDownload === 'function') {
+        options.onDownload(filename, content);
+      } else if (App && typeof App.downloadTextFile === 'function') {
+        App.downloadTextFile(filename, content);
+      } else {
+        triggerDownload(filename, content);
+      }
+      const finalNote = note || `Saved "${filename}" to disk. Don't spend it all in one place.`;
       if (App && typeof App.onSaveCompleted === 'function') {
-        App.onSaveCompleted(note || `Saved "${filename}" to disk. Don't spend it all in one place.`);
+        App.onSaveCompleted(finalNote, { filename, mode, ...meta });
+      }
+      if (typeof options.onComplete === 'function') {
+        options.onComplete({ filename, mode, note: finalNote, ...meta });
       }
     };
 
@@ -69,94 +229,171 @@
       const card = showModalHTML(`
         <h3 class="modal-title">💾 Saving... But Are You Really Done Though?</h3>
         <p class="modal-body">
-          I'm letting you save <code>${filename}</code> normally this time. Enjoy this rare moment of mercy.
+          I'm letting you save <code>${safeFilename}</code> normally this time. Enjoy this rare moment of mercy.
         </p>
         <div class="modal-actions">
           <button id="modal-save-cancel" type="button" class="modal-btn">Wait, Let Me Edit</button>
           <button id="modal-save-confirm" type="button" class="modal-btn modal-btn-primary">Download .txt</button>
         </div>
       `);
-      if (!card) return;
-      card.querySelector('#modal-save-cancel').addEventListener('click', closeModal);
-      card.querySelector('#modal-save-confirm').addEventListener('click', () => {
+      if (!card) return mode;
+      card.dataset.saveMode = 'normal';
+      activeSaveMode = 'normal';
+
+      const confirmBtn = card.querySelector('#modal-save-confirm');
+      card.querySelector('#modal-save-cancel').addEventListener('click', () => closeModal());
+      confirmBtn.addEventListener('click', () => {
         finishSave(`Saved "${filename}" on the merciful path. Still mediocre, though.`);
       });
-      return;
+      confirmBtn.focus();
+      return mode;
     }
 
     if (mode === 'rate') {
       if (Audio) Audio.playDisappointmentDing();
+      const pillsHTML = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        .map(
+          (n) =>
+            `<button type="button" class="rating-pill${n === 4 ? ' is-selected' : ''}" data-rating="${n}" aria-label="Rate ${n} out of 10">${n}</button>`
+        )
+        .join('');
+
       const card = showModalHTML(`
         <h3 class="modal-title">💾 Rate Your Work Before I Save It</h3>
         <p class="modal-body">
-          Ctrl+S requires self-awareness. Rate this draft from <strong>1 to 10</strong> before I allow it onto your hard drive.
+          Ctrl+S requires self-awareness. Rate <code>${safeFilename}</code> from <strong>1 to 10</strong> before I allow it onto your hard drive.
         </p>
-        <div class="modal-field">
-          <label for="save-rating-input">Your honest rating (/10):</label>
-          <input id="save-rating-input" class="modal-input" type="number" min="1" max="10" value="4" />
-        </div>
-        <p id="save-rating-feedback" class="modal-body" style="color: var(--danger); margin-bottom: 10px;"></p>
-        <div class="modal-actions">
-          <button id="modal-rate-cancel" type="button" class="modal-btn">Cancel</button>
-          <button id="modal-rate-submit" type="button" class="modal-btn modal-btn-primary">Submit &amp; Save</button>
-        </div>
+        <form id="save-rating-form" novalidate>
+          <div class="modal-field">
+            <label for="save-rating-input">Your honest rating (/10):</label>
+            <input id="save-rating-input" class="modal-input" type="number" min="1" max="10" step="1" value="4" inputmode="numeric" />
+          </div>
+          <div class="rating-pills" role="group" aria-label="Quick score selection">
+            ${pillsHTML}
+          </div>
+          <p id="save-rating-feedback" class="modal-body save-rating-feedback" role="alert" aria-live="polite"></p>
+          <div class="modal-actions">
+            <button id="modal-rate-cancel" type="button" class="modal-btn">Cancel</button>
+            <button id="modal-rate-submit" type="submit" class="modal-btn modal-btn-primary">Submit &amp; Save</button>
+          </div>
+        </form>
       `);
-      if (!card) return;
-      card.querySelector('#modal-rate-cancel').addEventListener('click', closeModal);
-      card.querySelector('#modal-rate-submit').addEventListener('click', () => {
-        const val = Number(card.querySelector('#save-rating-input').value);
-        const fb = card.querySelector('#save-rating-feedback');
-        if (!Number.isFinite(val) || val < 1 || val > 10) {
-          fb.textContent = 'Pick a number between 1 and 10. Math is not optional.';
+      if (!card) return mode;
+      card.dataset.saveMode = 'rate';
+      activeSaveMode = 'rate';
+
+      const form = card.querySelector('#save-rating-form');
+      const input = card.querySelector('#save-rating-input');
+      const fb = card.querySelector('#save-rating-feedback');
+      const pills = [...card.querySelectorAll('.rating-pill')];
+
+      const syncPills = () => {
+        const val = Number(input.value);
+        pills.forEach((pill) => {
+          pill.classList.toggle('is-selected', Number(pill.dataset.rating) === val);
+        });
+      };
+
+      pills.forEach((pill) => {
+        pill.addEventListener('click', () => {
+          input.value = pill.dataset.rating;
+          fb.textContent = '';
+          syncPills();
+          input.focus();
+        });
+      });
+
+      input.addEventListener('input', () => {
+        fb.textContent = '';
+        syncPills();
+      });
+
+      card.querySelector('#modal-rate-cancel').addEventListener('click', () => closeModal());
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const result = evaluateSaveRating(input.value, filename);
+        if (!result.valid) {
+          fb.textContent = result.error;
           if (Audio) Audio.playRageBuzzer();
+          shakeActiveModal();
+          input.focus();
           return;
         }
-        const verdict =
-          val >= 8
-            ? `You rated this ${val}/10?! Delusional confidence, but fine—saving "${filename}".`
-            : val >= 5
-            ? `${val}/10. At least you know it's aggressively average. Saving "${filename}".`
-            : `${val}/10. Refreshingly honest self-assessment. Saving "${filename}" out of pity.`;
-        finishSave(verdict);
+        if (result.highScore && Audio) {
+          Audio.playDisappointmentDing();
+        }
+        finishSave(result.verdict, { rating: result.value });
       });
-      return;
+
+      input.focus();
+      if (typeof input.select === 'function') input.select();
+      return mode;
     }
 
     // mode === 'delay' (5-second dramatic suspense)
-    if (Audio) Audio.playSuspenseMusic();
+    const duration =
+      typeof options.delayMs === 'number' && options.delayMs > 0 ? options.delayMs : 5000;
+    const durationSec = duration / 1000;
+
+    if (Audio) Audio.playSuspenseMusic(durationSec);
     const card = showModalHTML(`
       <h3 class="modal-title">⏱️ Dramatic Save Deliberation...</h3>
       <p class="modal-body">
-        Hold on. I need 5 seconds of dramatic tension to decide if this draft deserves to exist on disk.
+        Hold on. I need ${durationSec.toFixed(0)} seconds of dramatic tension to decide if <code>${safeFilename}</code> deserves to exist on disk.
       </p>
-      <div class="modal-progress-track">
-        <div id="save-delay-bar" class="modal-progress-fill" style="width: 5%"></div>
+      <div class="modal-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div id="save-delay-bar" class="modal-progress-fill is-suspense" style="width: 0%"></div>
       </div>
-      <p id="save-delay-status" class="modal-body">5.0s remaining... Weighing your life choices...</p>
+      <p id="save-delay-status" class="modal-body">${durationSec.toFixed(1)}s remaining... Weighing your life choices...</p>
       <div class="modal-actions">
         <button id="modal-delay-cancel" type="button" class="modal-btn">Abort Save</button>
       </div>
     `);
-    if (!card) return;
-    card.querySelector('#modal-delay-cancel').addEventListener('click', closeModal);
+    if (!card) return mode;
+    card.dataset.saveMode = 'delay';
+    activeSaveMode = 'delay';
 
+    const track = card.querySelector('.modal-progress-track');
     const bar = card.querySelector('#save-delay-bar');
     const status = card.querySelector('#save-delay-status');
-    const started = Date.now();
-    const duration = 5000;
+    const cancelBtn = card.querySelector('#modal-delay-cancel');
 
+    cancelBtn.addEventListener('click', () => {
+      closeModal();
+      if (App && typeof App.showToast === 'function') {
+        App.showToast('Save aborted. Couldn\'t handle 5 seconds of suspense, huh?');
+      }
+    });
+    cancelBtn.focus();
+
+    const delayStages = [
+      'Weighing your life choices...',
+      'Auditing every questionable adjective...',
+      'Consulting the Ministry of Literature...',
+      'Debating whether your hard drive deserves this...',
+      'Reluctantly approving file transfer...'
+    ];
+
+    const started = Date.now();
     activeTimer = setInterval(() => {
       const elapsed = Date.now() - started;
-      const pct = Math.min(100, Math.round((elapsed / duration) * 100));
-      const rem = Math.max(0, ((duration - elapsed) / 1000)).toFixed(1);
+      const ratio = Math.min(1, elapsed / duration);
+      const pct = Math.round(ratio * 100);
+      const rem = Math.max(0, (duration - elapsed) / 1000).toFixed(1);
+      const stageIdx = Math.min(delayStages.length - 1, Math.floor(ratio * delayStages.length));
+
       if (bar) bar.style.width = `${pct}%`;
-      if (status) status.textContent = `${rem}s remaining... Auditing every questionable adjective...`;
+      if (track) track.setAttribute('aria-valuenow', String(pct));
+      if (status) status.textContent = `${rem}s remaining... ${delayStages[stageIdx]}`;
+
       if (elapsed >= duration) {
         clearInterval(activeTimer);
         activeTimer = null;
-        finishSave(`Saved "${filename}" after 5 seconds of theatrical suspense.`);
+        finishSave(`Saved "${filename}" after ${durationSec.toFixed(0)} seconds of theatrical suspense.`);
       }
-    }, 100);
+    }, 50);
+
+    return mode;
   }
 
   function openMeltdownModal(onComplete) {
@@ -177,7 +414,7 @@
           Processing Trauma...
         </button>
       </div>
-    `);
+    `, { dismissible: false });
     if (!card) return;
 
     const stages = [
@@ -200,6 +437,7 @@
       if (elapsed >= total) {
         clearInterval(activeTimer);
         activeTimer = null;
+        modalDismissible = true;
         if (btn) {
           btn.disabled = false;
           btn.textContent = 'I Feel Guilty (Continue)';
@@ -426,6 +664,8 @@
   }
 
   root.YP.Modals = {
+    SAVE_MODES,
+    evaluateSaveRating,
     openSaveFlow,
     openMeltdownModal,
     openBackspaceIntervention,
@@ -433,6 +673,11 @@
     openAISettingsModal,
     openScoreboardModal,
     openAboutModal,
-    closeModal
+    isOpen,
+    isDismissible,
+    getActiveSaveMode,
+    shakeActiveModal,
+    closeModal,
+    close: closeModal
   };
 })();
