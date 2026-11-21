@@ -701,7 +701,10 @@
           ]
         });
       } else {
-        if (Audio) Audio.playOrchestralSting();
+        if (Audio) {
+          Audio.playSadViolin();
+          Audio.playOrchestralSting();
+        }
         open({
           title: '👁️ Step 3 of 3: YapPad Will Remember This.',
           dismissible: false,
@@ -722,11 +725,12 @@
                 let closeCount = 1;
                 try {
                   if (typeof localStorage !== 'undefined') {
-                    const prev = Number(
-                      localStorage.getItem('sn_close_count') ||
-                        localStorage.getItem('yp_close_count') ||
+                    const rawPrev = Number(
+                      localStorage.getItem('yp_close_count') ||
+                        localStorage.getItem('sn_close_count') ||
                         0
                     );
+                    const prev = Number.isFinite(rawPrev) && rawPrev > 0 ? rawPrev : 0;
                     closeCount = prev + 1;
                     localStorage.setItem('sn_remembers_close', 'true');
                     localStorage.setItem('yp_remembers_close', 'true');
@@ -877,7 +881,7 @@
       dismissible: true,
       bodyHTML: `
         <p class="modal-paragraph">
-          Live session proof: <strong>${escapeHTML(stats.words)} words</strong>, <strong>${escapeHTML(stats.errors)} sins</strong>, <strong>${escapeHTML(stats.backspaces)} backspaces</strong>, stage <strong>${escapeHTML(stats.escalation)}/4</strong>.
+          Live session proof: <strong>${escapeHTML(stats.words)} words</strong>, <strong>${escapeHTML(stats.wpm)} WPM</strong>, <strong>${escapeHTML(stats.errors)} sins</strong>, <strong>${escapeHTML(stats.backspaces)} backspaces</strong>, mood <strong>${escapeHTML(stats.mood)}</strong>, stage <strong>${escapeHTML(stats.escalation)}/4</strong>.
         </p>
         <div class="modal-scoreboard-list">
           <div><strong>✅ A — Most Frustrating (25 pts):</strong> 0ms mid-typing ragebait modals, 4-corner-hopping stalkers, shrinking errors (100%→26%), font-shrink punishment (15.5px→11px), dodging Autocorrect, save sabotage, 3-step exit trap.</div>

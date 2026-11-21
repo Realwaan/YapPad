@@ -139,7 +139,7 @@
           localStorage.getItem('yp_close_count') || localStorage.getItem('sn_close_count') || 0
         );
         state.remembersClose = rem;
-        state.closeCount = cnt;
+        state.closeCount = rem ? Math.max(1, Number.isFinite(cnt) ? cnt : 1) : 0;
       }
     } catch {
       // Ignore storage errors
@@ -840,6 +840,7 @@
         const Audio = root.YP.Audio;
         const on = Audio ? Audio.getConfig().enabled : true;
         audioBtn.textContent = on ? '🔊 Audio: On' : '🔇 Audio: Muted';
+        audioBtn.setAttribute('aria-pressed', on ? 'false' : 'true');
       };
       syncAudioBtn();
       audioBtn.addEventListener('click', () => {
@@ -881,6 +882,7 @@
         if (root.YP.Audio) root.YP.Audio.playCornerZip();
         addCommentary('I won\'t fix that. You need to learn.', { tag: '✨ Autocorrect Refused' });
       };
+      autoBtn.addEventListener('mousedown', (e) => e.preventDefault());
       autoBtn.addEventListener('mouseenter', dodgeAutocorrect);
       autoBtn.addEventListener('click', dodgeAutocorrect);
     }
@@ -902,6 +904,8 @@
       reopenBtn.addEventListener('click', () => {
         const ab = el('abandoned-screen');
         if (ab) ab.hidden = true;
+        const textarea = el('editor-textarea');
+        if (textarea) textarea.focus();
         addCommentary(
           `Look who crawled back after closing me (${state.closeCount} betrayal${state.closeCount === 1 ? '' : 's'} on record).`,
           { tag: '👁️ I Remember' }
@@ -971,9 +975,16 @@
       case 'file-exit':
         if (Modals) {
           Modals.openExitFlow((closeCount) => {
+            if (Ragebait) Ragebait.clearAll();
             state.remembersClose = true;
             state.closeCount = closeCount;
             updateEscalation();
+            const sub = el('abandoned-subtext');
+            if (sub) {
+              sub.innerHTML =
+                `I left <code>i_remember.txt</code> in your downloads so you don't forget what you did ` +
+                `(${closeCount} betrayal${closeCount === 1 ? '' : 's'} logged).`;
+            }
             const ab = el('abandoned-screen');
             if (ab) ab.hidden = false;
           });
@@ -1100,7 +1111,7 @@
             : 'Deleting again? This is becoming a pattern.';
           addCommentary(line, { tag: `🗑️ Backspace #${state.backspaces}` });
           if (root.YP.Ragebait) {
-            root.YP.Ragebait.showCenterRagebait({
+            root.YP.Ragebait.onMistake({
               token: `Backspace ×${state.backspaces}`,
               message: line
             });

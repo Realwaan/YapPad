@@ -1,3 +1,9 @@
+/**
+ * YapPad Procedural Web Audio Synthesizer (Ticket 10).
+ * Zero external audio asset dependencies — synthesizes all 13 comedic cues using
+ * AudioContext oscillators, gain envelopes, master gain silencing, and filtered noise buffers.
+ * Persists { enabled, volume } in localStorage (yp_audio_config / sn_audio_config).
+ */
 (function () {
   const root = typeof window !== 'undefined' ? window : globalThis;
   root.YP = root.YP || {};
@@ -7,10 +13,18 @@
   const STORAGE_KEY_YP = 'yp_audio_config';
 
   let ctx = null;
+  let masterGain = null;
+  let gestureListenersBound = false;
   let config = {
     enabled: true,
     volume: 0.45
   };
+
+  function clampVolume(val) {
+    const num = Number(val);
+    if (!Number.isFinite(num)) return config.volume;
+    return Math.max(0, Math.min(1, num));
+  }
 
   function loadConfig() {
     try {
@@ -19,11 +33,13 @@
         if (raw) {
           const parsed = JSON.parse(raw);
           if (typeof parsed.enabled === 'boolean') config.enabled = parsed.enabled;
-          if (typeof parsed.volume === 'number') config.volume = Math.max(0, Math.min(1, parsed.volume));
+          if (typeof parsed.volume === 'number' && Number.isFinite(parsed.volume)) {
+            config.volume = Math.max(0, Math.min(1, parsed.volume));
+          }
         }
       }
     } catch {
-      // Ignore storage errors
+      // Ignore storage errors (e.g. restricted file:// or private browsing)
     }
   }
 
@@ -39,17 +55,30 @@
     }
   }
 
-  function getContext() {
-    if (!config.enabled) return null;
+  function syncMasterGain() {
+    if (!ctx || !masterGain) return;
+    try {
+      const target = config.enabled ? config.volume : 0;
+      const now = ctx.currentTime;
+      if (typeof masterGain.gain.cancelScheduledValues === 'function') {
+        masterGain.gain.cancelScheduledValues(now);
+      }
+      masterGain.gain.setValueAtTime(target, now);
+    } catch {
+      // Ignore audio gain errors
+    }
+  }
+
+  function ensureContext() {
     if (typeof window === 'undefined') return null;
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     if (!AudioCtx) return null;
     try {
       if (!ctx) {
         ctx = new AudioCtx();
-      }
-      if (ctx.state === 'suspended') {
-        ctx.resume().catch(() => {});
+        masterGain = ctx.createGain();
+        masterGain.gain.setValueAtTime(config.enabled ? config.volume : 0, ctx.currentTime);
+        masterGain.connect(ctx.destination);
       }
       return ctx;
     } catch {
@@ -57,9 +86,41 @@
     }
   }
 
+  function getContext() {
+    if (!config.enabled) return null;
+    const audioCtx = ensureContext();
+    if (!audioCtx) return null;
+    try {
+      if (audioCtx.state === 'suspended' && typeof audioCtx.resume === 'function') {
+        const res = audioCtx.resume();
+        if (res && typeof res.catch === 'function') res.catch(() => {});
+      }
+      syncMasterGain();
+      return audioCtx;
+    } catch {
+      return null;
+    }
+  }
+
+  function bindFirstGestureUnlock() {
+    if (gestureListenersBound || typeof window === 'undefined') return;
+    gestureListenersBound = true;
+
+    const unlock = () => {
+      if (config.enabled) {
+        getContext();
+      }
+      window.removeEventListener('pointerdown', unlock, true);
+      window.removeEventListener('keydown', unlock, true);
+    };
+
+    window.addEventListener('pointerdown', unlock, { capture: true, passive: true });
+    window.addEventListener('keydown', unlock, { capture: true, passive: true });
+  }
+
   function playToneSequence(notes) {
     const audioCtx = getContext();
-    if (!audioCtx) return false;
+    if (!audioCtx || !masterGain) return false;
     const now = audioCtx.currentTime;
     notes.forEach((n) => {
       try {
@@ -72,12 +133,12 @@
         if (n.endFreq) {
           osc.frequency.exponentialRampToValueAtTime(Math.max(20, n.endFreq), start + dur);
         }
-        const peak = Math.max(0.001, (n.gain || 0.25) * config.volume);
+        const peak = Math.max(0.001, n.gain || 0.25);
         gain.gain.setValueAtTime(0.0001, start);
         gain.gain.linearRampToValueAtTime(peak, start + Math.min(0.03, dur * 0.25));
         gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
         osc.connect(gain);
-        gain.connect(audioCtx.destination);
+        gain.connect(masterGain);
         osc.start(start);
         osc.stop(start + dur + 0.02);
       } catch {
@@ -87,32 +148,95 @@
     return true;
   }
 
+  function playFilteredNoise(options = {}) {
+    const audioCtx = getContext();
+    if (!audioCtx || !masterGain) return false;
+    try {
+      const duration = Math.max(0.05, Number(options.duration) || 0.5);
+      const start = audioCtx.currentTime + (Number(options.delay) || 0);
+      const sampleRate = audioCtx.sampleRate || 44100;
+      const frameCount = Math.max(1, Math.floor(sampleRate * duration));
+      const buffer = audioCtx.createBuffer(1, frameCount, sampleRate);
+      const channel = buffer.getChannelData(0);
+      for (let i = 0; i < frameCount; i += 1) {
+        channel[i] = Math.random() * 2 - 1;
+      }
+
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
+
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = options.filterType || 'bandpass';
+      filter.frequency.setValueAtTime(options.startFreq || 960, start);
+      if (options.endFreq) {
+        filter.frequency.exponentialRampToValueAtTime(Math.max(40, options.endFreq), start + duration);
+      }
+      filter.Q.value = options.q || 1.6;
+
+      const gain = audioCtx.createGain();
+      const peak = Math.max(0.001, Number(options.gain) || 0.22);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.linearRampToValueAtTime(peak, start + Math.min(0.1, duration * 0.25));
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(masterGain);
+      source.start(start);
+      source.stop(start + duration + 0.02);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   loadConfig();
+  bindFirstGestureUnlock();
 
   const AudioModule = {
     getConfig() {
       return { ...config };
     },
+    isMuted() {
+      return !config.enabled;
+    },
     setEnabled(enabled) {
       config.enabled = Boolean(enabled);
+      syncMasterGain();
+      if (!config.enabled && ctx && ctx.state === 'running' && typeof ctx.suspend === 'function') {
+        const res = ctx.suspend();
+        if (res && typeof res.catch === 'function') res.catch(() => {});
+      } else if (config.enabled) {
+        getContext();
+      }
       saveConfig();
       return config.enabled;
     },
     setVolume(vol) {
-      config.volume = Math.max(0, Math.min(1, Number(vol) || 0));
+      config.volume = clampVolume(vol);
+      syncMasterGain();
       saveConfig();
       return config.volume;
     },
     toggleMute() {
-      config.enabled = !config.enabled;
-      saveConfig();
-      return config.enabled;
+      return this.setEnabled(!config.enabled);
+    },
+    resume() {
+      return Boolean(getContext());
     },
     playSigh() {
-      return playToneSequence([
-        { type: 'triangle', freq: 310, endFreq: 175, duration: 0.45, gain: 0.28 },
-        { type: 'sine', freq: 240, endFreq: 130, delay: 0.08, duration: 0.5, gain: 0.2 }
+      const noiseOk = playFilteredNoise({
+        duration: 0.62,
+        startFreq: 980,
+        endFreq: 310,
+        q: 1.8,
+        gain: 0.24
+      });
+      const toneOk = playToneSequence([
+        { type: 'triangle', freq: 310, endFreq: 175, duration: 0.45, gain: 0.24 },
+        { type: 'sine', freq: 240, endFreq: 130, delay: 0.08, duration: 0.5, gain: 0.18 }
       ]);
+      return noiseOk || toneOk;
     },
     playDisappointmentDing() {
       return playToneSequence([
