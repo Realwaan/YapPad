@@ -27,7 +27,7 @@ node http_smoke.mjs
 
 | Category | How YapPad Qualifies | Key Files | Points |
 |---|---|---|---|
-| **A — Most Frustrating** | Instant `0ms` click-dodging Writing Violation modals, 4-corner-hopping error stalkers that dodge `✕`, shrinking error cards (`100% → 26%`), font-shrink (`15.5px → 11px` + `🔍 Beg For Normal Font`) & Comic Sans crimes, dodging `✨ Autocorrect`, 3-space `Tab`, forbidden shortcut heckler (`Ctrl+B/I/U/F`), Plagiarism Police paste/copy watermarks, Backspace guilt & meltdown, Save sabotage (`/10` rating / 5s delay), 3-step close trap. | `js/ragebait.js`, `js/annoyances.js`, `js/modals.js`, `js/app.js` | ✅ 25 |
+| **A — Most Frustrating** | Instant `0ms` click-dodging Writing Violation modals, Fix-Before-Typing error lockout (blocks new typing until typos are fixed), Save-to-Delete shredder betrayal (`Ctrl+S` deletes notes instead of saving), 4-corner-hopping error stalkers that dodge `✕`, shrinking error cards (`100% → 26%`), font-shrink (`15.5px → 11px` + `🔍 Beg For Normal Font`) & Comic Sans crimes, dodging `✨ Autocorrect`, 3-space `Tab`, forbidden shortcut heckler (`Ctrl+B/I/U/F`), Plagiarism Police paste/copy watermarks, Backspace guilt & meltdown, Save sabotage (`delete`/`/10` rating/5s delay), 3-step close trap. | `js/ragebait.js`, `js/annoyances.js`, `js/modals.js`, `js/app.js` | ✅ 25 |
 | **B — Creative Use of AI** | Evaluates writing every ~30 words (or via `Ctrl+J`) using active mood + live telemetry (`WPM`, `Backspaces`, `Errors`) via **Google Gemini API** (`gemini-2.5-flash`), **OpenAI API** (`gpt-4o-mini`), or the built-in contextual offline critic. | `js/ai.js`, `js/app.js` | ✅ 25 |
 | **C — Funniest** | 6 shifting moods (`Passive-Aggressive`, `Dramatic`, `Intellectual` with fake academic citations, `Sad` with rain, `Angry` word scrambler + apology, rare 10s `Supportive` with sparkles), 15s ghost-writing takeover (`38ms`/char), Yappy paperclip assistant, Tab-Switch Jealousy, Free Trial nag, 17 procedural Web Audio cues, `i_remember.txt` grudge memory. | `js/moods.js`, `js/audio.js`, `js/annoyances.js`, `js/ragebait.js` | ✅ 25 |
 | **D — Most Pointless, Yet Brilliant** | Fully functional text editor (open `.txt`, save `.txt`, line numbers, cursor telemetry, WPM sparkline, synchronized wavy-underline backdrop, shake-to-refill virtual toner cartridge, filename despair drift) engineered specifically to resist peaceful note-taking. | `index.html`, `styles.css`, `js/grammar.js`, `js/annoyances.js` | ✅ 25 |
@@ -48,9 +48,9 @@ YapPad/
 │   ├── moods.js        # 6 moods, dialogue pools, ghostwriting scripts, fake citations, SVG face states
 │   ├── grammar.js      # 0ms mid-typing spelling/grammar shamer with LEXICON_PREFIXES & wavy backdrop
 │   ├── ai.js           # Gemini (gemini-2.5-flash), OpenAI (gpt-4o-mini), and 0ms Offline Critic
-│   ├── modals.js       # Save sabotage (normal/rate/delay), Meltdown, 3-step Exit + i_remember.txt, Scoreboard
+│   ├── modals.js       # Save sabotage (delete/normal/rate/delay), Meltdown, 3-step Exit + i_remember.txt, Scoreboard
 │   ├── ragebait.js     # Click-dodging Writing Violation popup, 4-corner-hopping stalkers, shrinking error cards
-│   ├── annoyances.js   # Copy/paste watermarks, 3-space Tab, shortcut heckler, low toner, Yappy, trial nag, font crimes
+│   ├── annoyances.js   # Fix-Before-Typing lockout, paste/copy watermarks, 3-space Tab, shortcut heckler, low toner, Yappy, trial nag, font crimes
 │   └── app.js          # Main controller: WPM sparkline, font-shrink punishment, 5s/15s idle engine, shortcuts
 ├── smoke_test.mjs      # Automated unit smoke test suite
 ├── http_smoke.mjs      # Automated HTTP server smoke test suite

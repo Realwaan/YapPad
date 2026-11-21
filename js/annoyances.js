@@ -98,7 +98,13 @@
     lastShoutAt: 0,
     lastTabNoteAt: 0,
     lastScrollDriftAt: 0,
-    scrollDriftDir: 1
+    scrollDriftDir: 1,
+    strictErrorLock: true,
+    blockedKeystrokes: 0,
+    repairAnchor: null,
+    wasLocked: false,
+    lastLockBonkAt: 0,
+    lastLockNoteAt: 0
   };
 
   let tiltTimer = null;
@@ -223,6 +229,19 @@
     const Audio = root.YP.Audio;
     const textarea = el('editor-textarea');
     if (!textarea || !e) return false;
+
+    const issues = getActiveIssues();
+    const blockingIssue = shouldBlockTypingForError(
+      issues,
+      textarea.selectionStart || 0,
+      textarea.selectionEnd || 0,
+      'a'
+    );
+    if (blockingIssue) {
+      e.preventDefault();
+      notifyBlockedTyping(blockingIssue, 'paste');
+      return true;
+    }
 
     const clip = e.clipboardData || (typeof window !== 'undefined' ? window.clipboardData : null);
     const pasted = clip && typeof clip.getData === 'function' ? String(clip.getData('text') || '') : '';
@@ -705,6 +724,278 @@
     return state.fontCrime;
   }
 
+  function getActiveIssues() {
+    const textarea = el('editor-textarea');
+    const Grammar = root.YP.Grammar;
+    if (textarea && Grammar && typeof Grammar.analyze === 'function') {
+      const text = textarea.value;
+      const cursorPos =
+        typeof textarea.selectionStart === 'number' ? textarea.selectionStart : text.length;
+      return Grammar.analyze(text, { cursorPos, instant: true });
+    }
+    const App = root.YP.App;
+    if (App && App.state && Array.isArray(App.state.currentIssues)) {
+      return App.state.currentIssues;
+    }
+    return [];
+  }
+
+  function formatIssueLabel(issue) {
+    if (!issue) return 'your mistake';
+    const raw = String(issue.token || '');
+    if (!raw.trim() && raw.length > 0) return 'double space';
+    return `"${raw}"`;
+  }
+
+  function shouldBlockTypingForError(issues, selStart, selEnd, key, options = {}) {
+    const lockEnabled =
+      typeof options.strictErrorLock === 'boolean' ? options.strictErrorLock : state.strictErrorLock;
+    if (!lockEnabled) return null;
+    if (!Array.isArray(issues) || issues.length === 0) return null;
+
+    const k = String(key || '');
+    const isInsertionKey = k.length === 1 || k === 'Enter' || k === 'Tab';
+    if (!isInsertionKey) return null;
+
+    const start = Math.max(0, Number(selStart) || 0);
+    const end = Math.max(start, Number(selEnd) || start);
+
+    // Never allow Enter or Tab while an error remains unresolved
+    if (k === 'Enter' || k === 'Tab') {
+      return issues[0];
+    }
+
+    // Allow continuing a word currently being repaired after replacing an error selection
+    const anchor =
+      options.repairAnchor !== undefined ? options.repairAnchor : state.repairAnchor;
+    if (
+      anchor !== null &&
+      start === end &&
+      start === anchor &&
+      /^[a-zA-Z']$/.test(k)
+    ) {
+      return null;
+    }
+
+    // Allow repairing an active error span:
+    // 1) Replacing a non-empty selection overlapping an error
+    // 2) Inserting a character strictly inside an error span (e.g. 'e' inside "notpad", ' ' inside "alot")
+    const editingError = issues.some((issue) => {
+      const iStart = Number(issue.start) || 0;
+      const iEnd = Number(issue.end) || iStart;
+      if (end > start) {
+        return start <= iEnd && end >= iStart;
+      }
+      return start > iStart && start < iEnd;
+    });
+
+    return editingError ? null : issues[0];
+  }
+
+  function syncErrorLockUI(issuesOverride) {
+    const issues = Array.isArray(issuesOverride) ? issuesOverride : getActiveIssues();
+    const locked = Boolean(state.strictErrorLock && issues.length > 0);
+
+    const banner = el('error-lock-banner');
+    const textEl = el('error-lock-text');
+    const pane =
+      typeof document !== 'undefined' ? document.querySelector('.editor-pane') : null;
+    const menuItem = el('menu-demo-error-lock');
+    const menuLabel = el('menu-demo-error-lock-label');
+
+    if (menuItem) {
+      menuItem.classList.toggle('is-active', Boolean(state.strictErrorLock));
+    }
+    if (menuLabel) {
+      menuLabel.textContent = `Fix-Before-Typing Lock: ${state.strictErrorLock ? 'On' : 'Off'}`;
+    }
+
+    if (pane) {
+      pane.classList.toggle('is-error-locked', locked);
+    }
+    if (banner) {
+      banner.hidden = !locked;
+    }
+
+    if (locked) {
+      state.wasLocked = true;
+      const first = issues[0];
+      const countLabel =
+        issues.length === 1 ? '1 error' : `${issues.length} errors`;
+      const blockedNote =
+        state.blockedKeystrokes > 0
+          ? ` · ${state.blockedKeystrokes} key${state.blockedKeystrokes === 1 ? '' : 's'} blocked`
+          : '';
+      if (textEl) {
+        textEl.textContent = `🔒 Typing locked (${countLabel}${blockedNote}): fix ${formatIssueLabel(first)} before typing anything else.`;
+      }
+    } else {
+      const hadBlocked = state.blockedKeystrokes > 0;
+      const wasLockedBefore = state.wasLocked;
+      state.wasLocked = false;
+      state.blockedKeystrokes = 0;
+      state.repairAnchor = null;
+      if (hadBlocked && wasLockedBefore && state.strictErrorLock) {
+        const App = root.YP.App;
+        const Audio = root.YP.Audio;
+        if (Audio && typeof Audio.playSupportiveChime === 'function') {
+          Audio.playSupportiveChime();
+        }
+        if (App && typeof App.showToast === 'function') {
+          App.showToast('🔓 Error fixed. Keyboard unlocked — try not to mess up again.', 'success');
+        }
+      }
+    }
+    return { locked, issueCount: issues.length };
+  }
+
+  function notifyBlockedTyping(issue, source = 'key') {
+    const now = Date.now();
+    state.blockedKeystrokes += 1;
+    state.repairAnchor = null;
+
+    const Audio = root.YP.Audio;
+    const App = root.YP.App;
+    if (Audio && typeof Audio.playFakeErrorBonk === 'function' && now - state.lastLockBonkAt >= 360) {
+      state.lastLockBonkAt = now;
+      Audio.playFakeErrorBonk();
+    }
+
+    syncErrorLockUI();
+
+    const banner = el('error-lock-banner');
+    if (banner) {
+      banner.classList.remove('is-lock-shake');
+      void banner.offsetWidth;
+      banner.classList.add('is-lock-shake');
+    }
+
+    if (now - state.lastLockNoteAt >= 3800) {
+      state.lastLockNoteAt = now;
+      const target = formatIssueLabel(issue);
+      const actionVerb = source === 'paste' ? 'pasting' : 'typing';
+      const line = `Keyboard locked! Fix ${target} first — no ${actionVerb} anything new until you clean up your mess.`;
+      if (App && typeof App.addCommentary === 'function') {
+        App.addCommentary(line, { tag: '🔒 Fix Error First' });
+      }
+      if (App && typeof App.showToast === 'function') {
+        App.showToast(`🔒 Can't type yet! Fix ${target} first.`, 'danger');
+      }
+    }
+  }
+
+  function jumpToFirstError() {
+    const textarea = el('editor-textarea');
+    const issues = getActiveIssues();
+    if (!textarea || issues.length === 0) return false;
+    const first = issues[0];
+    const start = Math.max(0, Math.min(textarea.value.length, Number(first.start) || 0));
+    const end = Math.max(start, Math.min(textarea.value.length, Number(first.end) || start));
+    textarea.focus();
+    try {
+      textarea.setSelectionRange(start, end);
+    } catch {
+      // Ignore selection errors in non-interactive environments
+    }
+    const App = root.YP.App;
+    if (App && typeof App.updateLineNumbersAndCounts === 'function') {
+      App.updateLineNumbersAndCounts();
+    }
+    return true;
+  }
+
+  function handleErrorLockKeydown(e) {
+    if (!e || e.ctrlKey || e.metaKey || e.altKey) return false;
+    const textarea = el('editor-textarea');
+    if (!textarea) return false;
+
+    const key = String(e.key || '');
+    if (key === 'Backspace' || key === 'Delete') {
+      state.repairAnchor = null;
+      return false;
+    }
+
+    const issues = getActiveIssues();
+    const selStart = textarea.selectionStart || 0;
+    const selEnd = textarea.selectionEnd || 0;
+    const blockingIssue = shouldBlockTypingForError(issues, selStart, selEnd, key);
+
+    if (blockingIssue) {
+      e.preventDefault();
+      notifyBlockedTyping(blockingIssue, 'key');
+      return true;
+    }
+
+    // Track continuous word repair when user replaces a highlighted error span
+    if (issues.length > 0 && key.length === 1) {
+      if (selEnd > selStart && /^[a-zA-Z']$/.test(key)) {
+        state.repairAnchor = selStart + 1;
+      } else if (state.repairAnchor !== null && selStart === state.repairAnchor && /^[a-zA-Z']$/.test(key)) {
+        state.repairAnchor = selStart + 1;
+      } else {
+        state.repairAnchor = null;
+      }
+    } else if (key.length === 1 || key === 'ArrowLeft' || key === 'ArrowRight' || key === 'ArrowUp' || key === 'ArrowDown') {
+      state.repairAnchor = null;
+    }
+    return false;
+  }
+
+  function handleErrorLockBeforeInput(e) {
+    if (!e) return false;
+    const type = String(e.inputType || '');
+    if (!type.startsWith('insert')) return false;
+    const textarea = el('editor-textarea');
+    if (!textarea) return false;
+
+    const issues = getActiveIssues();
+    const sampleKey =
+      type === 'insertLineBreak' || type === 'insertParagraph'
+        ? 'Enter'
+        : typeof e.data === 'string' && e.data.length > 0
+        ? e.data[0]
+        : 'a';
+    const blockingIssue = shouldBlockTypingForError(
+      issues,
+      textarea.selectionStart || 0,
+      textarea.selectionEnd || 0,
+      sampleKey
+    );
+    if (blockingIssue) {
+      e.preventDefault();
+      notifyBlockedTyping(blockingIssue, type === 'insertFromPaste' ? 'paste' : 'key');
+      return true;
+    }
+    return false;
+  }
+
+  function setStrictErrorLock(enabled, announce = false) {
+    state.strictErrorLock = Boolean(enabled);
+    if (!state.strictErrorLock) {
+      state.blockedKeystrokes = 0;
+      state.repairAnchor = null;
+      state.wasLocked = false;
+    }
+    syncErrorLockUI();
+    if (announce) {
+      const App = root.YP.App;
+      const msg = state.strictErrorLock
+        ? '🔒 Fix-Before-Typing Lock enabled: you cannot type another word until every error is fixed.'
+        : '🔓 Fix-Before-Typing Lock paused (temporarily).';
+      if (App && typeof App.addCommentary === 'function') {
+        App.addCommentary(msg, { tag: state.strictErrorLock ? '🔒 Error Lock On' : '🔓 Error Lock Off' });
+      }
+      if (App && typeof App.showToast === 'function') {
+        App.showToast(msg, state.strictErrorLock ? 'warning' : 'info');
+      }
+    }
+    return state.strictErrorLock;
+  }
+
+  function toggleStrictErrorLock() {
+    return setStrictErrorLock(!state.strictErrorLock, true);
+  }
+
   function onEscalationChanged(stageNum) {
     if (stageNum >= 2 && !state.trialNagAutoShown) {
       showTrialNag();
@@ -715,6 +1006,7 @@
   }
 
   function unleashMaximumAnnoyance() {
+    setStrictErrorLock(true, false);
     dropToner(22);
     showTrialNag();
     applyTypographyChaos('comic');
@@ -747,6 +1039,7 @@
     state.tonerWarned = false;
     state.fontCrime = 'none';
     state.yellingTilt = false;
+    setStrictErrorLock(false, false);
     syncTonerUI();
 
     if (typeof document !== 'undefined' && document.body) {
@@ -792,6 +1085,11 @@
       trialBtn.addEventListener('click', () => dismissTrialNag(true));
     }
 
+    const jumpErrBtn = el('btn-jump-error');
+    if (jumpErrBtn) {
+      jumpErrBtn.addEventListener('click', jumpToFirstError);
+    }
+
     const yappyYes = el('yappy-btn-yes');
     if (yappyYes) {
       yappyYes.addEventListener('click', handleYappyAccept);
@@ -819,6 +1117,7 @@
 
   function init() {
     syncTonerUI();
+    syncErrorLockUI();
     wireControls();
   }
 
@@ -851,6 +1150,13 @@
     scheduleScrollDrift,
     nudgeScroll,
     applyTypographyChaos,
+    shouldBlockTypingForError,
+    syncErrorLockUI,
+    jumpToFirstError,
+    handleErrorLockKeydown,
+    handleErrorLockBeforeInput,
+    setStrictErrorLock,
+    toggleStrictErrorLock,
     onEscalationChanged,
     unleashMaximumAnnoyance,
     restoreSanity

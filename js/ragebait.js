@@ -326,7 +326,7 @@
     card.className = 'shrinking-error-card';
 
     const slot = shrinkingCards.length;
-    card.style.top = `${172 + slot * 76}px`;
+    card.style.top = `${202 + slot * 74}px`;
     card.style.right = `${285 + (slot % 2) * 34}px`;
     card.style.transform = `scale(${SHRINK_STEPS[0]})`;
     card.setAttribute('data-scale', String(SHRINK_STEPS[0]));

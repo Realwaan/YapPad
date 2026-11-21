@@ -116,11 +116,16 @@ for (const cue of audioCues) {
 }
 YP.Audio.setEnabled(true);
 
-// 6. Save manipulation (modes, 1-10 rating validation, high-score mockery, suspense audio safety)
+// 6. Save manipulation (modes including delete betrayal, 1-10 rating validation, high-score mockery, suspense audio safety)
 await import('./js/app.js');
-assert.deepEqual(YP.Modals.SAVE_MODES, ['normal', 'rate', 'delay'], 'Save flow must support normal, rate, and delay');
+assert.deepEqual(
+  YP.Modals.SAVE_MODES,
+  ['normal', 'rate', 'delay', 'delete'],
+  'Save flow must support normal, rate, delay, and delete'
+);
 assert.equal(typeof YP.Modals.openSaveFlow, 'function', 'YP.Modals.openSaveFlow must be exported');
 assert.equal(typeof YP.App.downloadTextFile, 'function', 'YP.App.downloadTextFile must be exported');
+assert.equal(typeof YP.App.shredDocumentForSave, 'function', 'YP.App.shredDocumentForSave must be exported');
 assert.equal(typeof YP.App.saveDocument, 'function', 'YP.App.saveDocument must be exported');
 
 for (const badScore of ['', '   ', '0', '11', '-1', '6.5', 'ten']) {
@@ -199,5 +204,58 @@ assert.equal(YP.Annoyances.state.yappyVisible, false, 'restoreSanity must hide Y
 assert.equal(YP.Annoyances.state.trialNagVisible, false, 'restoreSanity must hide trial nag');
 assert.equal(YP.Annoyances.state.fontCrime, 'none', 'restoreSanity must clear fontCrime');
 assert.equal(YP.Annoyances.state.toner, 100, 'restoreSanity must restore toner to 100%');
+assert.equal(YP.Annoyances.state.strictErrorLock, false, 'restoreSanity pauses strictErrorLock');
+
+// 9. Fix-Before-Typing Error Lockout unit tests
+YP.Annoyances.setStrictErrorLock(true, false);
+const tehIssues = YP.Grammar.analyze('Today teh', { cursorPos: 9, instant: true });
+assert.equal(tehIssues.length, 1, 'Expected 1 issue for "Today teh"');
+assert.ok(
+  YP.Annoyances.shouldBlockTypingForError(tehIssues, 9, 9, ' '),
+  'Typing Space after unresolved "teh" must be blocked'
+);
+assert.ok(
+  YP.Annoyances.shouldBlockTypingForError(tehIssues, 9, 9, 'a'),
+  'Typing a new letter after unresolved "teh" must be blocked'
+);
+assert.ok(
+  YP.Annoyances.shouldBlockTypingForError(tehIssues, 9, 9, 'Enter'),
+  'Pressing Enter with unresolved error must be blocked'
+);
+assert.ok(
+  YP.Annoyances.shouldBlockTypingForError(tehIssues, 9, 9, 'Tab'),
+  'Pressing Tab with unresolved error must be blocked'
+);
+assert.equal(
+  YP.Annoyances.shouldBlockTypingForError(tehIssues, 9, 9, 'Backspace'),
+  null,
+  'Backspace must always remain allowed to delete the error'
+);
+assert.equal(
+  YP.Annoyances.shouldBlockTypingForError(tehIssues, 9, 9, 'ArrowLeft'),
+  null,
+  'Arrow keys must always remain allowed'
+);
+assert.equal(
+  YP.Annoyances.shouldBlockTypingForError(tehIssues, 6, 9, 't'),
+  null,
+  'Replacing selected error span ("teh") must be allowed'
+);
+const notpadIssues = YP.Grammar.analyze('notpad', { cursorPos: 6, instant: true });
+assert.equal(
+  YP.Annoyances.shouldBlockTypingForError(notpadIssues, 3, 3, 'e'),
+  null,
+  'Typing strictly inside an error span ("not|pad" -> "notepad") must be allowed'
+);
+assert.equal(
+  YP.Annoyances.shouldBlockTypingForError([], 5, 5, 'a'),
+  null,
+  'Typing with 0 errors must be allowed'
+);
+assert.equal(
+  YP.Annoyances.shouldBlockTypingForError(tehIssues, 9, 9, 'a', { strictErrorLock: false }),
+  null,
+  'Typing must be allowed when strictErrorLock is toggled off'
+);
 
 console.log('ALL_UNIT_CHECKS_PASSED');

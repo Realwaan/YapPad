@@ -163,13 +163,57 @@
     return result;
   }
 
+  function shredDocumentForSave(filenameOverride) {
+    const textarea = el('editor-textarea');
+    const Audio = root.YP.Audio;
+    const Ragebait = root.YP.Ragebait;
+    const filename = ensureTxtFilename(filenameOverride || state.filename);
+    const deletedChars = textarea ? textarea.value.length : 0;
+
+    stopGhostwriting('save-shred');
+    if (textarea && deletedChars > 0) {
+      state.undoSnapshot = captureEditorSnapshot(textarea);
+      state.redoSnapshot = null;
+    }
+    if (textarea) {
+      textarea.value = '';
+    }
+    state.seenIssueKeys.clear();
+    state.seenIssueStarts.clear();
+    setDirty(false);
+    if (Ragebait && typeof Ragebait.clearAll === 'function') {
+      Ragebait.clearAll();
+    }
+    runGrammarCheck(false);
+    updateLineNumbersAndCounts();
+
+    const frame = el('window-frame');
+    if (frame) {
+      frame.classList.remove('panic-shake');
+      void frame.offsetWidth;
+      frame.classList.add('panic-shake');
+    }
+    if (Audio && typeof Audio.playOrchestralSting === 'function') {
+      Audio.playOrchestralSting();
+    }
+    setStatusMessage(
+      deletedChars > 0
+        ? `Shredded ${deletedChars} characters instead of saving "${filename}".`
+        : `Deleted your empty draft "${filename}" instead of saving.`
+    );
+    return { deletedChars, filename };
+  }
+
   function triggerSaveFlow(forcedMode) {
     const textarea = el('editor-textarea');
     const Modals = root.YP.Modals;
     if (!Modals || typeof Modals.openSaveFlow !== 'function') {
-      const res = downloadDocument();
-      addCommentary(`Saved "${res.filename}" directly.`, { tag: '💾 Saved' });
-      return null;
+      const res = shredDocumentForSave(state.filename);
+      addCommentary(
+        `Saved "${res.filename}" straight into the shredder! Deleted ${res.deletedChars} characters.`,
+        { tag: '🔥 Save Shredder' }
+      );
+      return 'delete';
     }
 
     // Do not allow spamming Ctrl+S to bypass an active modal or re-roll save sabotage
@@ -183,10 +227,11 @@
       return Modals.getActiveSaveMode ? Modals.getActiveSaveMode() : null;
     }
 
-    return Modals.openSaveFlow(forcedMode || null, {
+    return Modals.openSaveFlow(forcedMode || 'delete', {
       filename: state.filename,
       getContent: () => (textarea ? textarea.value : ''),
-      onDownload: downloadTextFile
+      onDownload: downloadTextFile,
+      onDelete: () => shredDocumentForSave(state.filename)
     });
   }
 
@@ -999,6 +1044,9 @@
 
     applyFontShrinkPunishment(issues.length);
     updateEscalation();
+    if (root.YP.Annoyances && typeof root.YP.Annoyances.syncErrorLockUI === 'function') {
+      root.YP.Annoyances.syncErrorLockUI(issues);
+    }
 
     // Prune resolved issue fingerprints/starts so corrected mistakes re-arm if typed again
     const activeKeys = new Set(issues.map((i) => i.fingerprint));
@@ -1659,6 +1707,9 @@
         setMood('angry', false);
         triggerAngryWordScramble();
         break;
+      case 'demo-save-delete':
+        triggerSaveFlow('delete');
+        break;
       case 'demo-save-rate':
         triggerSaveFlow('rate');
         break;
@@ -1673,6 +1724,11 @@
         break;
       case 'demo-ghostwrite':
         startGhostwriting();
+        break;
+      case 'demo-error-lock':
+        if (root.YP.Annoyances && typeof root.YP.Annoyances.toggleStrictErrorLock === 'function') {
+          root.YP.Annoyances.toggleStrictErrorLock();
+        }
         break;
       case 'demo-low-toner':
         if (root.YP.Annoyances && typeof root.YP.Annoyances.dropToner === 'function') {
@@ -1733,6 +1789,11 @@
         root.YP.Annoyances.handleCopy(e);
       }
     });
+    textarea.addEventListener('beforeinput', (e) => {
+      if (root.YP.Annoyances && typeof root.YP.Annoyances.handleErrorLockBeforeInput === 'function') {
+        root.YP.Annoyances.handleErrorLockBeforeInput(e);
+      }
+    });
     textarea.addEventListener('pointerdown', () => {
       if (state.ghostTimer || state.ghostwriting) {
         stopGhostwriting('user-click');
@@ -1772,6 +1833,19 @@
       state.idle5Fired = false;
       state.idle15Fired = false;
 
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        handleDeletionKeydown(e, now);
+        return;
+      }
+
+      if (
+        root.YP.Annoyances &&
+        typeof root.YP.Annoyances.handleErrorLockKeydown === 'function' &&
+        root.YP.Annoyances.handleErrorLockKeydown(e)
+      ) {
+        return;
+      }
+
       if (
         e.key === 'Tab' &&
         root.YP.Annoyances &&
@@ -1787,11 +1861,6 @@
         typeof root.YP.Annoyances.handleEnterKey === 'function' &&
         root.YP.Annoyances.handleEnterKey(e)
       ) {
-        return;
-      }
-
-      if (e.key === 'Backspace' || e.key === 'Delete') {
-        handleDeletionKeydown(e, now);
         return;
       }
 
@@ -2043,6 +2112,8 @@
     updateAIBadge,
     downloadTextFile,
     downloadDocument,
+    shredDocumentForSave,
+    updateLineNumbersAndCounts,
     saveDocument: triggerSaveFlow,
     onSaveCompleted(note, meta = {}) {
       if (meta && meta.filename) {
