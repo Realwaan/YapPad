@@ -932,6 +932,44 @@ body {
   stroke-linecap: round;
 }
 
+.ghostwriting-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #ffffff;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+@keyframes yp-ghost-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.75); }
+}
+
+.ghost-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fde68a;
+  animation: yp-ghost-pulse 0.9s ease-in-out infinite;
+}
+
+body[data-ghostwriting="true"] #status-bar {
+  background: var(--accent-soft);
+  border-top-color: var(--accent);
+}
+
+body[data-ghostwriting="true"] #editor-pane {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
 .status-message {
   color: var(--ink-primary);
   font-weight: 500;

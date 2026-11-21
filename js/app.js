@@ -28,6 +28,8 @@
     FAST_COOLDOWN_MS: 10000,
     IDLE_LONELY_MS: 5000,
     IDLE_LONELY_SAD_MS: 3500,
+    IDLE_GHOSTWRITE_MS: 15000,
+    GHOSTWRITE_CHAR_MS: 38,
     ACTIVE_TYPING_GRACE_MS: 3500,
     FAST_ACTIVE_GRACE_MS: 1500,
   };
@@ -59,6 +61,12 @@
     "It's so quiet in here when you stop typing…",
   ];
 
+  const GHOSTWRITE_ANNOUNCE_LINES = [
+    "Fine. Since you walked away, I'll write this myself.",
+    "15 seconds of silence? Executive takeover initiated.",
+    "Clearly you're busy. Step aside—let a professional write.",
+  ];
+
   const state = {
     filename: DEFAULT_FILENAME,
     dirty: false,
@@ -66,6 +74,7 @@
     escalation: 0,
     wpm: 0,
     speedBand: "idle",
+    ghostwriting: false,
     backspaces: 0,
     errors: 0,
     fontSizePx: DEFAULT_FONT_SIZE,
@@ -93,6 +102,18 @@
     slowLineIdx: 0,
     fastLineIdx: 0,
     lonelyLineIdx: 0,
+  };
+
+  const ghostwriter = {
+    active: false,
+    triggeredForIdle: false,
+    intervalId: null,
+    fullText: "",
+    index: 0,
+    undoSnapshot: null,
+    redoSnapshot: null,
+    justHaltedByKey: false,
+    announceLineIdx: 0,
   };
 
   const listeners = Object.create(null);
@@ -201,6 +222,7 @@
       commentaryCount: document.getElementById("commentary-count"),
       btnClearNotes: document.getElementById("btn-clear-notes"),
       yappadFace: document.getElementById("yappad-face"),
+      ghostwritingIndicator: document.getElementById("ghostwriting-indicator"),
       statusMessage: document.getElementById("status-message"),
       cursorPos: document.getElementById("cursor-pos"),
       wordCount: document.getElementById("word-count"),
@@ -492,6 +514,7 @@
     }
     state.typingTimestamps.push(now);
     judgeTimers.lastPrintableKeyAt = now;
+    ghostwriter.triggeredForIdle = false;
     markUserActivity(now);
   }
 
@@ -705,12 +728,26 @@
       emit("idle-lonely", { idleMs: idleMs, mood: state.mood, now: now, line: line });
     }
 
+    // 4. Idle Ghostwriter (15s idle, once per idle window until user types again)
+    const modalOpen = Boolean(YP.Modals && typeof YP.Modals.isOpen === "function" && YP.Modals.isOpen());
+    const abandonedOpen = Boolean(dom && dom.abandonedScreen && !dom.abandonedScreen.hidden);
+    if (
+      !ghostwriter.active &&
+      !ghostwriter.triggeredForIdle &&
+      !modalOpen &&
+      !abandonedOpen &&
+      idleMs >= SPEED_CONFIG.IDLE_GHOSTWRITE_MS
+    ) {
+      startGhostwriter();
+    }
+
     emit("telemetry-tick", {
       now: now,
       wpm: wpm,
       idleMs: idleMs,
       speedBand: state.speedBand,
       mood: state.mood,
+      ghostwriting: ghostwriter.active,
     });
 
     return {
@@ -720,8 +757,223 @@
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // Idle Ghostwriter & Single-Step Undo Snapshot (Ticket 04)
+  // ---------------------------------------------------------------------------
+  function setGhostwritingUI(isActive) {
+    state.ghostwriting = Boolean(isActive);
+    if (typeof document !== "undefined" && document.body) {
+      if (state.ghostwriting) {
+        document.body.setAttribute("data-ghostwriting", "true");
+      } else {
+        document.body.removeAttribute("data-ghostwriting");
+      }
+    }
+    if (dom && dom.ghostwritingIndicator) {
+      dom.ghostwritingIndicator.hidden = !state.ghostwriting;
+    }
+  }
+
+  function clearGhostSnapshots() {
+    ghostwriter.undoSnapshot = null;
+    ghostwriter.redoSnapshot = null;
+    ghostwriter.justHaltedByKey = false;
+  }
+
+  function buildGhostPrefix(existingText) {
+    if (!existingText) return "";
+    if (existingText.endsWith("\n\n")) return "";
+    if (existingText.endsWith("\n")) return "\n";
+    return "\n\n";
+  }
+
+  function stepGhostwriter() {
+    if (!ghostwriter.active || !dom || !dom.textarea) return false;
+    if (ghostwriter.index >= ghostwriter.fullText.length) {
+      stopGhostwriter("completed");
+      return false;
+    }
+
+    const ch = ghostwriter.fullText[ghostwriter.index];
+    ghostwriter.index += 1;
+
+    dom.textarea.value += ch;
+    const endPos = dom.textarea.value.length;
+    dom.textarea.selectionStart = endPos;
+    dom.textarea.selectionEnd = endPos;
+    dom.textarea.scrollTop = dom.textarea.scrollHeight;
+
+    setDirty(true);
+    syncBackdrop();
+    updateCursorAndCounts();
+
+    if (ghostwriter.index >= ghostwriter.fullText.length) {
+      stopGhostwriter("completed");
+    }
+    return true;
+  }
+
+  function startGhostwriter(scriptOverride) {
+    if (ghostwriter.active || !dom || !dom.textarea) return false;
+
+    const script =
+      typeof scriptOverride === "string" && scriptOverride.length > 0
+        ? scriptOverride
+        : YP.Moods && typeof YP.Moods.getGhostScript === "function"
+          ? YP.Moods.getGhostScript(state.mood)
+          : "Fine. Since nobody else is typing, I will finish this myself.";
+
+    const preText = dom.textarea.value;
+    ghostwriter.undoSnapshot = {
+      text: preText,
+      selectionStart: dom.textarea.selectionStart,
+      selectionEnd: dom.textarea.selectionEnd,
+      scrollTop: dom.textarea.scrollTop,
+      dirty: state.dirty,
+    };
+    ghostwriter.redoSnapshot = null;
+    ghostwriter.justHaltedByKey = false;
+    ghostwriter.triggeredForIdle = true;
+    ghostwriter.active = true;
+    ghostwriter.fullText = buildGhostPrefix(preText) + script;
+    ghostwriter.index = 0;
+
+    setGhostwritingUI(true);
+
+    const announceIdx = ghostwriter.announceLineIdx % GHOSTWRITE_ANNOUNCE_LINES.length;
+    ghostwriter.announceLineIdx += 1;
+    const announceLine = GHOSTWRITE_ANNOUNCE_LINES[announceIdx];
+    addCommentary(announceLine, { tag: "👻 Ghostwriter" });
+    setStatus("Ghostwriting… press any key or click to take control.");
+
+    emit("ghostwrite-start", {
+      mood: state.mood,
+      script: script,
+      snapshot: ghostwriter.undoSnapshot,
+    });
+
+    ghostwriter.intervalId = global.setInterval(
+      stepGhostwriter,
+      SPEED_CONFIG.GHOSTWRITE_CHAR_MS
+    );
+    return true;
+  }
+
+  function stopGhostwriter(reason) {
+    const wasActive = ghostwriter.active;
+    if (ghostwriter.intervalId !== null) {
+      global.clearInterval(ghostwriter.intervalId);
+      ghostwriter.intervalId = null;
+    }
+    ghostwriter.active = false;
+    setGhostwritingUI(false);
+
+    if (!wasActive) return false;
+
+    if (reason === "completed") {
+      setStatus("Ghostwriting complete. Press Ctrl+Z if you prefer your silence.");
+      emit("ghostwrite-complete", {
+        mood: state.mood,
+        charsWritten: ghostwriter.index,
+      });
+    } else if (reason === "user-key" || reason === "user-click") {
+      setStatus("Fine. You can have your keyboard back.");
+      emit("ghostwrite-stop", {
+        reason: reason,
+        charsWritten: ghostwriter.index,
+      });
+    } else {
+      emit("ghostwrite-stop", {
+        reason: reason || "stopped",
+        charsWritten: ghostwriter.index,
+      });
+    }
+    return true;
+  }
+
+  function hasGhostUndoSnapshot() {
+    return ghostwriter.undoSnapshot !== null;
+  }
+
+  function undoDocument() {
+    if (!dom || !dom.textarea) return false;
+
+    if (ghostwriter.active) {
+      stopGhostwriter("undo");
+    }
+
+    if (ghostwriter.undoSnapshot) {
+      const snap = ghostwriter.undoSnapshot;
+      ghostwriter.redoSnapshot = {
+        text: dom.textarea.value,
+        selectionStart: dom.textarea.selectionStart,
+        selectionEnd: dom.textarea.selectionEnd,
+        scrollTop: dom.textarea.scrollTop,
+        dirty: state.dirty,
+      };
+      ghostwriter.undoSnapshot = null;
+      ghostwriter.justHaltedByKey = false;
+
+      dom.textarea.value = snap.text;
+      dom.textarea.focus();
+      dom.textarea.selectionStart = snap.selectionStart;
+      dom.textarea.selectionEnd = snap.selectionEnd;
+      dom.textarea.scrollTop = snap.scrollTop;
+
+      setDirty(snap.dirty);
+      syncBackdrop();
+      updateCursorAndCounts();
+      setStatus("Undid YapPad's ghostwriting.");
+      emit("ghostwrite-undone", { restoredText: snap.text });
+      return true;
+    }
+
+    dom.textarea.focus();
+    document.execCommand("undo");
+    syncBackdrop();
+    updateCursorAndCounts();
+    return true;
+  }
+
+  function redoDocument() {
+    if (!dom || !dom.textarea) return false;
+
+    if (ghostwriter.redoSnapshot) {
+      const snap = ghostwriter.redoSnapshot;
+      ghostwriter.undoSnapshot = {
+        text: dom.textarea.value,
+        selectionStart: dom.textarea.selectionStart,
+        selectionEnd: dom.textarea.selectionEnd,
+        scrollTop: dom.textarea.scrollTop,
+        dirty: state.dirty,
+      };
+      ghostwriter.redoSnapshot = null;
+
+      dom.textarea.value = snap.text;
+      dom.textarea.focus();
+      dom.textarea.selectionStart = snap.selectionStart;
+      dom.textarea.selectionEnd = snap.selectionEnd;
+      dom.textarea.scrollTop = snap.scrollTop;
+
+      setDirty(snap.dirty);
+      syncBackdrop();
+      updateCursorAndCounts();
+      setStatus("Redid YapPad's ghostwriting.");
+      return true;
+    }
+
+    dom.textarea.focus();
+    document.execCommand("redo");
+    syncBackdrop();
+    updateCursorAndCounts();
+    return true;
+  }
+
   function resetTypingJudge(nowOverride) {
     const now = typeof nowOverride === "number" ? nowOverride : Date.now();
+    stopGhostwriter("reset");
+    clearGhostSnapshots();
+    ghostwriter.triggeredForIdle = false;
     state.typingTimestamps = [];
     state.wpmHistory = new Array(SPEED_CONFIG.SPARKLINE_SAMPLES).fill(0);
     state.speedBand = "idle";
@@ -757,6 +1009,8 @@
   // ---------------------------------------------------------------------------
   function newDocument() {
     if (!dom || !dom.textarea) return;
+    stopGhostwriter("new-document");
+    clearGhostSnapshots();
     dom.textarea.value = "";
     state.issues = [];
     state.seenIssueKeys.clear();
@@ -783,6 +1037,8 @@
     if (!file || !dom || !dom.textarea) return;
     const reader = new FileReader();
     reader.onload = function () {
+      stopGhostwriter("open-file");
+      clearGhostSnapshots();
       const content = typeof reader.result === "string" ? reader.result : "";
       dom.textarea.value = content;
       state.issues = [];
@@ -889,20 +1145,10 @@
         requestClose();
         break;
       case "edit-undo":
-        if (dom.textarea) {
-          dom.textarea.focus();
-          document.execCommand("undo");
-          syncBackdrop();
-          updateCursorAndCounts();
-        }
+        undoDocument();
         break;
       case "edit-redo":
-        if (dom.textarea) {
-          dom.textarea.focus();
-          document.execCommand("redo");
-          syncBackdrop();
-          updateCursorAndCounts();
-        }
+        redoDocument();
         break;
       case "edit-select-all":
         if (dom.textarea) {
@@ -1022,6 +1268,12 @@
 
     if (dom.textarea) {
       dom.textarea.addEventListener("input", function () {
+        ghostwriter.triggeredForIdle = false;
+        if (ghostwriter.justHaltedByKey) {
+          ghostwriter.justHaltedByKey = false;
+        } else {
+          clearGhostSnapshots();
+        }
         markUserActivity();
         setDirty(true);
         syncBackdrop();
@@ -1034,11 +1286,53 @@
 
       dom.textarea.addEventListener("scroll", syncScroll);
 
+      ["pointerdown", "mousedown"].forEach(function (evtName) {
+        dom.textarea.addEventListener(evtName, function () {
+          if (ghostwriter.active) {
+            stopGhostwriter("user-click");
+          }
+        });
+      });
+
       ["keyup", "click", "select", "focus"].forEach(function (evtName) {
         dom.textarea.addEventListener(evtName, updateCursorAndCounts);
       });
 
       dom.textarea.addEventListener("keydown", function (event) {
+        const keyLower = (event.key || "").toLowerCase();
+        const ctrlOrMeta = event.ctrlKey || event.metaKey;
+        const isUndoKey = ctrlOrMeta && !event.altKey && !event.shiftKey && keyLower === "z";
+        const isRedoKey =
+          ctrlOrMeta &&
+          !event.altKey &&
+          (keyLower === "y" || (event.shiftKey && keyLower === "z"));
+
+        if (isUndoKey && (ghostwriter.active || ghostwriter.undoSnapshot)) {
+          event.preventDefault();
+          undoDocument();
+          emit("keydown", { event: event });
+          return;
+        }
+
+        if (isRedoKey && ghostwriter.redoSnapshot) {
+          event.preventDefault();
+          redoDocument();
+          emit("keydown", { event: event });
+          return;
+        }
+
+        if (ghostwriter.active) {
+          stopGhostwriter("user-key");
+          if (
+            isPrintableKeyEvent(event) ||
+            event.key === "Backspace" ||
+            event.key === "Delete" ||
+            event.key === "Enter"
+          ) {
+            ghostwriter.justHaltedByKey = true;
+          }
+        }
+
         if (isPrintableKeyEvent(event)) {
           recordPrintableKeystroke();
         } else if (
@@ -1046,6 +1340,7 @@
           event.key === "Delete" ||
           event.key === "Enter"
         ) {
+          ghostwriter.triggeredForIdle = false;
           markUserActivity();
         }
         emit("keydown", { event: event });
@@ -1095,8 +1390,34 @@
     }
 
     document.addEventListener("keydown", function (event) {
+      if (event.defaultPrevented) return;
+
       const key = (event.key || "").toLowerCase();
       const ctrlOrMeta = event.ctrlKey || event.metaKey;
+
+      if (ctrlOrMeta && !event.altKey && !event.shiftKey && key === "z") {
+        if (ghostwriter.active || ghostwriter.undoSnapshot) {
+          event.preventDefault();
+          undoDocument();
+          return;
+        }
+      }
+
+      if (
+        ctrlOrMeta &&
+        !event.altKey &&
+        (key === "y" || (event.shiftKey && key === "z"))
+      ) {
+        if (ghostwriter.redoSnapshot) {
+          event.preventDefault();
+          redoDocument();
+          return;
+        }
+      }
+
+      if (ghostwriter.active) {
+        stopGhostwriter("user-key");
+      }
 
       if (key === "escape") {
         if (openMenuGroup) {
@@ -1202,6 +1523,12 @@
     resetTypingJudge: resetTypingJudge,
     startTelemetry: startTelemetry,
     stopTelemetry: stopTelemetry,
+    startGhostwriter: startGhostwriter,
+    stopGhostwriter: stopGhostwriter,
+    stepGhostwriter: stepGhostwriter,
+    undoDocument: undoDocument,
+    redoDocument: redoDocument,
+    hasGhostUndoSnapshot: hasGhostUndoSnapshot,
     newDocument: newDocument,
     openDocumentPicker: openDocumentPicker,
     loadFile: loadFile,
