@@ -16,6 +16,7 @@ Then open `http://127.0.0.1:3456` in your browser.
 To run the automated verification suites:
 
 ```bash
+node --check server.mjs && for f in js/*.js; do node --check "$f"; done
 node smoke_test.mjs
 node http_smoke.mjs
 ```
