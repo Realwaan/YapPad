@@ -140,29 +140,6 @@ YapPad/
 
 ---
 
-## ⚙️ Setup
-
-Requires Python 3.10+ with `tkinter` available.
-
-```bash
-# 1. Create and activate a virtual environment
-python -m venv venv
-source venv/bin/activate        # macOS / Linux
-# venv\Scripts\activate         # Windows
-
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. (Optional) Configure your Gemini API key for AI roasts
-cp .env.example .env
-# Edit .env and set GEMINI_API_KEY=... (never commit .env)
-
-# 4. Run YapPad
-python main.py
-```
-
----
-
 ## 🎫 Tickets
 
 Work is tracked through the Website Associate Bot in

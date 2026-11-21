@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="YapPad — a sentient browser-based text editor with live telemetry, synchronized highlights, and real-time writing judgment.">
+  <title>YapPad</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="js/audio.js"></script>
+  <script defer src="js/moods.js"></script>
+  <script defer src="js/grammar.js"></script>
+  <script defer src="js/ai.js"></script>
+  <script defer src="js/modals.js"></script>
+  <script defer src="js/ragebait.js"></script>
+  <script defer src="js/app.js"></script>
+</head>
+<body data-mood="passive-aggressive" data-escalation="0">
+  <!-- Ambient layer for mood weather (Sad rain / Supportive sparkles) -->
+  <div id="ambient-layer" aria-hidden="true"></div>
+
+  <!-- Hidden file input for zero-dependency .txt loading (works on http:// and file://) -->
+  <input type="file" id="file-open-input" accept=".txt,text/plain" hidden>
+
+  <div id="app-shell">
+    <!-- Window Chrome -->
+    <header id="window-chrome">
+      <div class="chrome-left">
+        <span class="chrome-brand-mark" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <rect x="2" y="1.5" width="12" height="13" rx="2" stroke="currentColor" stroke-width="1.4"/>
+            <line x1="4.5" y1="5.5" x2="11.5" y2="5.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            <line x1="4.5" y1="8.5" x2="10" y2="8.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            <line x1="4.5" y1="11.5" x2="8" y2="11.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <h1 class="chrome-title">YapPad</h1>
+        <span class="chrome-divider" aria-hidden="true">—</span>
+        <span id="doc-filename" class="chrome-filename">Untitled.txt</span>
+        <span id="dirty-indicator" class="dirty-dot" title="Unsaved changes" aria-label="Unsaved changes" hidden></span>
+      </div>
+
+      <div class="chrome-right">
+        <button type="button" id="btn-mute" class="chrome-pill-btn" aria-pressed="false" title="Toggle sound effects">
+          <span class="mute-icon" aria-hidden="true">🔊</span>
+          <span class="mute-label">Sound</span>
+        </button>
+        <div class="window-controls" aria-label="Window controls">
+          <button type="button" id="btn-close-window" class="win-btn win-btn-close" title="Close YapPad" aria-label="Close YapPad">✕</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Menu Bar -->
+    <nav id="menu-bar" role="menubar" aria-label="Application menu">
+      <div class="menu-group" data-menu="file">
+        <button type="button" class="menu-trigger" role="menuitem" aria-haspopup="true" aria-expanded="false">File</button>
+        <div class="menu-dropdown" role="menu" hidden>
+          <button type="button" class="menu-item" role="menuitem" data-action="file-new">
+            <span>New</span><kbd>Alt+N</kbd>
+          </button>
+          <button type="button" class="menu-item" role="menuitem" data-action="file-open">
+            <span>Open .txt…</span><kbd>Ctrl+O</kbd>
+          </button>
+          <button type="button" class="menu-item" role="menuitem" data-action="file-save">
+            <span>Save .txt</span><kbd>Ctrl+S</kbd>
+          </button>
+          <div class="menu-separator" role="separator"></div>
+          <button type="button" class="menu-item" role="menuitem" data-action="file-exit">
+            <span>Exit</span><kbd>✕</kbd>
+          </button>
+        </div>
+      </div>
+
+      <div class="menu-group" data-menu="edit">
+        <button type="button" class="menu-trigger" role="menuitem" aria-haspopup="true" aria-expanded="false">Edit</button>
+        <div class="menu-dropdown" role="menu" hidden>
+          <button type="button" class="menu-item" role="menuitem" data-action="edit-undo">
+            <span>Undo</span><kbd>Ctrl+Z</kbd>
+          </button>
+          <button type="button" class="menu-item" role="menuitem" data-action="edit-redo">
+            <span>Redo</span><kbd>Ctrl+Y</kbd>
+          </button>
+          <div class="menu-separator" role="separator"></div>
+          <button type="button" class="menu-item" role="menuitem" data-action="edit-select-all">
+            <span>Select All</span><kbd>Ctrl+A</kbd>
+          </button>
+          <button type="button" class="menu-item" role="menuitem" data-action="edit-clear">
+            <span>Clear Document</span><kbd></kbd>
+          </button>
+        </div>
+      </div>
+
+      <div class="menu-group" data-menu="mood">
+        <button type="button" class="menu-trigger" role="menuitem" aria-haspopup="true" aria-expanded="false">Mood</button>
+        <div class="menu-dropdown" role="menu" hidden>
+          <button type="button" class="menu-item" role="menuitem" data-action="mood-set" data-mood="passive-aggressive">
+            <span>😒 Passive-Aggressive</span><kbd>Default</kbd>
+          </button>
+          <button type="button" class="menu-item" role="menuitem" data-action="mood-set" data-mood="dramatic">
+            <span>😤 Dramatic</span><kbd></kbd>
+          </button>
+          <button type="button" class="menu-item" role="menuitem" data-action="mood-set" data-mood="intellectual">
+            <span>🧐 Intellectual</span><kbd></kbd>
+          </button>
+          <button type="button" class="menu-item" role="menuitem" data-action="mood-set" data-mood="sad">
+            <span>😢 Sad</span><kbd></kbd>
+          </button>
+          <button type="button" class="menu-item" role="menuitem" data-action="mood-set" data-mood="angry">
+            <span>😡 Angry</span><kbd></kbd>
+          </button>
+          <button type="button" class="menu-item" role="menuitem" data-action="mood-set" data-mood="supportive">
+            <span>🥰 Supportive</span><kbd>10s</kbd>
+          </button>
+        </div>
+      </div>
+
+      <div class="menu-group" data-menu="ai">
+        <button type="button" class="menu-trigger" role="menuitem" aria-haspopup="true" aria-expanded="false">AI Brain</button>
+        <div class="menu-dropdown" role="menu" hidden>
+          <button type="button" class="menu-item" role="menuitem" data-action="ai-roast-now">
+            <span>Roast My Writing Now</span><kbd>Ctrl+J</kbd>
+          </button>
+          <button type="button" class="menu-item" role="menuitem" data-action="ai-settings">
+            <span>Configure Gemini / OpenAI API…</span><kbd></kbd>
+          </button>
+        </div>
+      </div>
+
+      <div class="menu-group" data-menu="demo">
+        <button type="button" class="menu-trigger" role="menuitem" aria-haspopup="true" aria-expanded="false">Demo</button>
+        <div class="menu-dropdown" role="menu" hidden>
+          <button type="button" class="menu-item" role="menuitem" data-action="demo-sample">
+            <span>Insert Roastable Sample Text</span><kbd></kbd>
+          </button>
+          <button type="button" class="menu-item" role="menuitem" data-action="demo-scramble">
+            <span>Trigger Angry Word Scramble</span><kbd></kbd>
+          </button>
+          <div class="menu-separator" role="separator"></div>
+          <button type="button" class="menu-item" role="menuitem" data-action="demo-save-rate">
+            <span>Save Sabotage: Rate /10</span><kbd></kbd>
+          </button>
+          <button type="button" class="menu-item" role="menuitem" data-action="demo-save-delay">
+            <span>Save Sabotage: 5s Suspense</span><kbd></kbd>
+          </button>
+          <button type="button" class="menu-item" role="menuitem" data-action="demo-meltdown">
+            <span>Trigger Mass-Delete Meltdown</span><kbd></kbd>
+          </button>
+          <div class="menu-separator" role="separator"></div>
+          <button type="button" class="menu-item" role="menuitem" data-action="demo-reset-grudge">
+            <span>Reset Grudge Memory</span><kbd></kbd>
+          </button>
+        </div>
+      </div>
+
+      <div class="menu-group" data-menu="help">
+        <button type="button" class="menu-trigger" role="menuitem" aria-haspopup="true" aria-expanded="false">Help</button>
+        <div class="menu-dropdown" role="menu" hidden>
+          <button type="button" class="menu-item" role="menuitem" data-action="help-scoreboard">
+            <span>Category Coverage (A–D)</span><kbd></kbd>
+          </button>
+          <button type="button" class="menu-item" role="menuitem" data-action="help-about">
+            <span>About YapPad</span><kbd></kbd>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Telemetry Ribbon -->
+    <section id="telemetry-ribbon" aria-label="Live writing telemetry">
+      <div class="telemetry-metrics">
+        <div class="metric-chip" title="Rolling words per minute">
+          <span class="metric-label">WPM</span>
+          <strong id="metric-wpm" class="metric-value">0</strong>
+          <svg id="wpm-sparkline" class="wpm-sparkline" viewBox="0 0 56 16" width="56" height="16" aria-hidden="true">
+            <polyline id="wpm-sparkline-line" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" points="0,14 56,14"/>
+          </svg>
+        </div>
+
+        <div class="metric-chip" title="Total backspaces and deletions">
+          <span class="metric-label">Backspaces</span>
+          <strong id="metric-backspaces" class="metric-value">0</strong>
+        </div>
+
+        <div class="metric-chip" title="Detected spelling and grammar sins">
+          <span class="metric-label">Errors</span>
+          <strong id="metric-errors" class="metric-value">0</strong>
+        </div>
+
+        <div class="metric-chip metric-chip-mood" title="Current YapPad mood">
+          <span class="metric-label">Mood</span>
+          <strong id="metric-mood" class="metric-value">😒 Passive-Aggressive</strong>
+        </div>
+      </div>
+
+      <div class="telemetry-actions">
+        <button type="button" id="btn-autocorrect" class="ribbon-btn" title="Attempt to autocorrect">✨ Autocorrect</button>
+        <button type="button" id="btn-restore-font" class="ribbon-btn ribbon-btn-danger" hidden>🔍 Beg For Normal Font</button>
+      </div>
+    </section>
+
+    <!-- Main Workspace: Synchronized Editor + Margin Notes -->
+    <main id="workspace">
+      <section id="editor-pane" aria-label="Document editor">
+        <div id="line-numbers" aria-hidden="true">
+          <div class="line-num is-active">1</div>
+        </div>
+        <div id="editor-stage">
+          <div id="editor-backdrop" aria-hidden="true"></div>
+          <textarea
+            id="editor-textarea"
+            aria-label="YapPad document editor"
+            placeholder="Start typing… YapPad is watching every keystroke."
+            spellcheck="false"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="off"
+          ></textarea>
+        </div>
+      </section>
+
+      <aside id="commentary-panel" aria-label="Margin notes commentary">
+        <div class="panel-header">
+          <div class="panel-title-wrap">
+            <h2 class="panel-title">Margin Notes</h2>
+            <span id="commentary-count" class="panel-badge">1</span>
+          </div>
+          <button type="button" id="btn-clear-notes" class="panel-clear-btn">Clear</button>
+        </div>
+        <div id="commentary-feed" role="log" aria-live="polite" aria-relevant="additions">
+          <article class="comment-card comment-card-system">
+            <div class="comment-meta">
+              <span class="comment-tag">😒 Passive-Aggressive</span>
+              <time class="comment-time">Just now</time>
+            </div>
+            <p class="comment-body">Oh. You again. Go ahead, type something. I’ll be here, silently judging.</p>
+          </article>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Status Bar with SVG Face -->
+    <footer id="status-bar">
+      <div class="status-left">
+        <svg id="yappad-face" class="yappad-face" viewBox="0 0 32 32" width="24" height="24" role="img" aria-label="YapPad expression">
+          <circle cx="16" cy="16" r="14" class="face-head"/>
+          <path id="yappad-brow-left" class="face-brow" d="M8.5 11.5 L13.5 12.2"/>
+          <path id="yappad-brow-right" class="face-brow" d="M18.5 12.2 L23.5 11.5"/>
+          <circle cx="11.2" cy="14.6" r="2.3" class="face-sclera"/>
+          <circle cx="20.8" cy="14.6" r="2.3" class="face-sclera"/>
+          <circle id="yappad-pupil-left" class="face-pupil" cx="11.2" cy="14.6" r="1.15"/>
+          <circle id="yappad-pupil-right" class="face-pupil" cx="20.8" cy="14.6" r="1.15"/>
+          <path id="yappad-mouth" class="face-mouth" d="M11 21.8 Q16 20.5 21 22"/>
+        </svg>
+        <span id="status-message" class="status-message">Oh. You again.</span>
+      </div>
+
+      <div class="status-right">
+        <span id="cursor-pos" class="status-stat">Ln 1, Col 1</span>
+        <span class="status-sep" aria-hidden="true">·</span>
+        <span id="word-count" class="status-stat">0 words</span>
+        <span class="status-sep" aria-hidden="true">·</span>
+        <span id="char-count" class="status-stat">0 chars</span>
+        <span class="status-sep status-sep-encoding" aria-hidden="true">·</span>
+        <span class="status-stat status-encoding">UTF-8</span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Overlays & Layers -->
+  <div id="ragebait-layer" aria-live="assertive"></div>
+  <div id="toast-stack" aria-live="polite" aria-atomic="false"></div>
+
+  <div id="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title" hidden>
+    <div id="modal-card" class="modal-card">
+      <div class="modal-header">
+        <h2 id="modal-title" class="modal-title">YapPad</h2>
+        <button type="button" id="modal-close" class="modal-close-btn" aria-label="Close dialog">✕</button>
+      </div>
+      <div id="modal-body" class="modal-body"></div>
+      <div id="modal-actions" class="modal-actions"></div>
+    </div>
+  </div>
+
+  <div id="abandoned-screen" hidden>
+    <div class="abandoned-content">
+      <svg class="abandoned-eyes" viewBox="0 0 140 60" width="140" height="60" aria-hidden="true">
+        <ellipse cx="42" cy="30" rx="24" ry="18" fill="#fbfaf6" stroke="#1e2329" stroke-width="3"/>
+        <ellipse cx="98" cy="30" rx="24" ry="18" fill="#fbfaf6" stroke="#1e2329" stroke-width="3"/>
+        <circle cx="42" cy="32" r="8" fill="#1e2329"/>
+        <circle cx="98" cy="32" r="8" fill="#1e2329"/>
+      </svg>
+      <h2 class="abandoned-title">You closed me.</h2>
+      <p class="abandoned-copy">I’m fine. Everything is fine. I definitely didn’t write <code>i_remember.txt</code> about this.</p>
+      <button type="button" id="btn-reopen-yappad" class="abandoned-btn">Sheepishly Reopen YapPad</button>
+    </div>
+  </div>
+</body>
+</html>

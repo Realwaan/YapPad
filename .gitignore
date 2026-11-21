@@ -1,16 +1,16 @@
 # Environment secrets
 .env
+.env.*
+!.env.example
 
-# Python bytecode and caches
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.pytest_cache/
+# Node dependencies
+node_modules/
 
-# Virtual environments
-venv/
-.venv/
+# Logs
+*.log
+logs/
+npm-debug.log*
 
-# OS files
+# OS & editor artifacts
 .DS_Store
+Thumbs.db
