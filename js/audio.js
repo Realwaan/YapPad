@@ -118,7 +118,26 @@
     window.addEventListener('keydown', unlock, { capture: true, passive: true });
   }
 
-  function playToneSequence(notes) {
+  let activeSuspenseNodes = [];
+
+  function stopSuspenseMusic() {
+    if (!activeSuspenseNodes.length) return;
+    const nodes = activeSuspenseNodes;
+    activeSuspenseNodes = [];
+    nodes.forEach(({ osc, gain }) => {
+      try {
+        if (gain && ctx) {
+          gain.gain.cancelScheduledValues(ctx.currentTime);
+          gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+        }
+        if (osc) osc.stop();
+      } catch {
+        // Ignore already-stopped oscillator errors
+      }
+    });
+  }
+
+  function playToneSequence(notes, trackList) {
     const audioCtx = getContext();
     if (!audioCtx || !masterGain) return false;
     const now = audioCtx.currentTime;
@@ -141,6 +160,9 @@
         gain.connect(masterGain);
         osc.start(start);
         osc.stop(start + dur + 0.02);
+        if (Array.isArray(trackList)) {
+          trackList.push({ osc, gain });
+        }
       } catch {
         // Ignore oscillator error
       }
@@ -202,6 +224,7 @@
     },
     setEnabled(enabled) {
       config.enabled = Boolean(enabled);
+      if (!config.enabled) stopSuspenseMusic();
       syncMasterGain();
       if (!config.enabled && ctx && ctx.state === 'running' && typeof ctx.suspend === 'function') {
         const res = ctx.suspend();
@@ -224,6 +247,7 @@
     resume() {
       return Boolean(getContext());
     },
+    stopSuspenseMusic,
     playSigh() {
       const noiseOk = playFilteredNoise({
         duration: 0.62,
@@ -263,13 +287,42 @@
         { type: 'sawtooth', freq: 311.1, endFreq: 293.6, duration: 0.75, gain: 0.24 }
       ]);
     },
-    playSuspenseMusic() {
-      return playToneSequence([
-        { type: 'triangle', freq: 196, duration: 0.35, delay: 0.0, gain: 0.2 },
-        { type: 'triangle', freq: 207.6, duration: 0.35, delay: 0.4, gain: 0.22 },
-        { type: 'triangle', freq: 196, duration: 0.35, delay: 0.8, gain: 0.22 },
-        { type: 'triangle', freq: 233.1, duration: 0.45, delay: 1.2, gain: 0.25 }
-      ]);
+    playSuspenseMusic(durationSec = 5) {
+      stopSuspenseMusic();
+      const total = Math.max(1.5, Number(durationSec) || 5);
+      const notes = [
+        // Low ominous drone spanning the countdown
+        { type: 'sine', freq: 98, endFreq: 110, duration: Math.max(1.2, total - 0.15), delay: 0.0, gain: 0.12 }
+      ];
+
+      // Escalating half-step tension pulse that accelerates over the 5s window
+      const pulsePattern = [196, 207.65, 196, 233.08];
+      let t = 0;
+      let step = 0;
+      const pulseCutoff = Math.max(0.8, total - 0.55);
+      while (t < pulseCutoff) {
+        const progress = t / pulseCutoff;
+        const interval = Math.max(0.22, 0.46 - progress * 0.22);
+        const dur = Math.min(interval * 0.85, pulseCutoff - t + 0.08);
+        const freq = pulsePattern[step % pulsePattern.length] * (1 + progress * 0.12);
+        notes.push({
+          type: 'triangle',
+          freq,
+          duration: Math.max(0.14, dur),
+          delay: t,
+          gain: 0.18 + progress * 0.1
+        });
+        t += interval;
+        step += 1;
+      }
+
+      // Dramatic resolving sting at the end of the countdown
+      notes.push(
+        { type: 'sawtooth', freq: 220, endFreq: 233.08, duration: 0.45, delay: Math.max(0, total - 0.5), gain: 0.16 },
+        { type: 'triangle', freq: 311.13, endFreq: 293.66, duration: 0.48, delay: Math.max(0, total - 0.48), gain: 0.22 }
+      );
+
+      return playToneSequence(notes, activeSuspenseNodes);
     },
     playSadViolin() {
       return playToneSequence([

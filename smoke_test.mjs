@@ -116,4 +116,30 @@ for (const cue of audioCues) {
 }
 YP.Audio.setEnabled(true);
 
+// 6. Save manipulation (modes, 1-10 rating validation, high-score mockery, suspense audio safety)
+await import('./js/app.js');
+assert.deepEqual(YP.Modals.SAVE_MODES, ['normal', 'rate', 'delay'], 'Save flow must support normal, rate, and delay');
+assert.equal(typeof YP.Modals.openSaveFlow, 'function', 'YP.Modals.openSaveFlow must be exported');
+assert.equal(typeof YP.App.downloadTextFile, 'function', 'YP.App.downloadTextFile must be exported');
+assert.equal(typeof YP.App.saveDocument, 'function', 'YP.App.saveDocument must be exported');
+
+for (const badScore of ['', '   ', '0', '11', '-1', '6.5', 'ten']) {
+  const res = YP.Modals.evaluateSaveRating(badScore, 'draft.txt');
+  assert.equal(res.valid, false, `Expected rating "${badScore}" to be rejected`);
+  assert.ok(res.error.length > 5, `Expected snarky error message for invalid rating "${badScore}"`);
+}
+
+for (let score = 1; score <= 10; score++) {
+  const res = YP.Modals.evaluateSaveRating(String(score), 'draft');
+  assert.equal(res.valid, true, `Expected rating ${score} to be accepted`);
+  assert.equal(res.value, score);
+  assert.ok(res.verdict.includes(`${score}/10`), `Expected verdict to mention ${score}/10`);
+  assert.ok(res.verdict.includes('draft.txt'), 'Expected verdict to normalize .txt filename');
+  assert.equal(res.highScore, score >= 8, `Expected highScore flag for ${score}`);
+}
+
+assert.equal(YP.Audio.playSuspenseMusic(5), false, 'playSuspenseMusic should safely no-op in Node');
+assert.equal(YP.Audio.playDisappointmentDing(), false, 'playDisappointmentDing should safely no-op in Node');
+YP.Audio.stopSuspenseMusic();
+
 console.log('ALL_UNIT_CHECKS_PASSED');
