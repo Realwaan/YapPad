@@ -1,158 +1,372 @@
 /**
- * YapPad Audio module (expanded with all 13 Web Audio cues & persistence in Ticket 10).
- * Implements synthesized playSigh and playPanicPip for Ticket 03 with safe headless/muted no-ops.
+ * YapPad Procedural Web Audio Synthesizer (Ticket 10).
+ * Zero external audio asset dependencies — synthesizes all 13 comedic cues using
+ * AudioContext oscillators, gain envelopes, master gain silencing, and filtered noise buffers.
+ * Persists { enabled, volume } in localStorage (yp_audio_config / sn_audio_config).
  */
-(function (global) {
-  "use strict";
+(function () {
+  const root = typeof window !== 'undefined' ? window : globalThis;
+  root.YP = root.YP || {};
+  root.SN = root.YP;
 
-  const YP = (global.YP = global.YP || global.SN || {});
-  global.SN = YP;
+  const STORAGE_KEY_SN = 'sn_audio_config';
+  const STORAGE_KEY_YP = 'yp_audio_config';
 
-  const noop = function () {};
-  let audioCtx = null;
+  let ctx = null;
+  let masterGain = null;
+  let gestureListenersBound = false;
+  let config = {
+    enabled: true,
+    volume: 0.45
+  };
 
-  function getContext() {
-    if (!AudioEngine.enabled) return null;
-    const Ctor =
-      typeof global.AudioContext === "function"
-        ? global.AudioContext
-        : typeof global.webkitAudioContext === "function"
-          ? global.webkitAudioContext
-          : null;
-    if (!Ctor) return null;
+  function clampVolume(val) {
+    const num = Number(val);
+    if (!Number.isFinite(num)) return config.volume;
+    return Math.max(0, Math.min(1, num));
+  }
+
+  function loadConfig() {
     try {
-      if (!audioCtx) {
-        audioCtx = new Ctor();
-      }
-      if (audioCtx.state === "suspended" && typeof audioCtx.resume === "function") {
-        const maybePromise = audioCtx.resume();
-        if (maybePromise && typeof maybePromise.catch === "function") {
-          maybePromise.catch(noop);
+      if (typeof localStorage !== 'undefined') {
+        const raw = localStorage.getItem(STORAGE_KEY_YP) || localStorage.getItem(STORAGE_KEY_SN);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (typeof parsed.enabled === 'boolean') config.enabled = parsed.enabled;
+          if (typeof parsed.volume === 'number' && Number.isFinite(parsed.volume)) {
+            config.volume = Math.max(0, Math.min(1, parsed.volume));
+          }
         }
       }
+    } catch {
+      // Ignore storage errors (e.g. restricted file:// or private browsing)
+    }
+  }
+
+  function saveConfig() {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const serialized = JSON.stringify(config);
+        localStorage.setItem(STORAGE_KEY_YP, serialized);
+        localStorage.setItem(STORAGE_KEY_SN, serialized);
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  }
+
+  function syncMasterGain() {
+    if (!ctx || !masterGain) return;
+    try {
+      const target = config.enabled ? config.volume : 0;
+      const now = ctx.currentTime;
+      if (typeof masterGain.gain.cancelScheduledValues === 'function') {
+        masterGain.gain.cancelScheduledValues(now);
+      }
+      masterGain.gain.setValueAtTime(target, now);
+    } catch {
+      // Ignore audio gain errors
+    }
+  }
+
+  function ensureContext() {
+    if (typeof window === 'undefined') return null;
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return null;
+    try {
+      if (!ctx) {
+        ctx = new AudioCtx();
+        masterGain = ctx.createGain();
+        masterGain.gain.setValueAtTime(config.enabled ? config.volume : 0, ctx.currentTime);
+        masterGain.connect(ctx.destination);
+      }
+      return ctx;
+    } catch {
+      return null;
+    }
+  }
+
+  function getContext() {
+    if (!config.enabled) return null;
+    const audioCtx = ensureContext();
+    if (!audioCtx) return null;
+    try {
+      if (audioCtx.state === 'suspended' && typeof audioCtx.resume === 'function') {
+        const res = audioCtx.resume();
+        if (res && typeof res.catch === 'function') res.catch(() => {});
+      }
+      syncMasterGain();
       return audioCtx;
     } catch {
       return null;
     }
   }
 
-  function playSigh() {
-    const ctx = getContext();
-    if (!ctx) return;
-    try {
-      const now = ctx.currentTime;
-      const duration = 0.72;
-      const vol = Math.max(0, Math.min(1, AudioEngine.volume)) * 0.16;
+  function bindFirstGestureUnlock() {
+    if (gestureListenersBound || typeof window === 'undefined') return;
+    gestureListenersBound = true;
 
-      // Soft descending airy breath (filtered noise)
-      const bufferSize = Math.max(1, Math.floor(ctx.sampleRate * duration));
-      const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-      const data = noiseBuffer.getChannelData(0);
-      for (let i = 0; i < bufferSize; i += 1) {
-        data[i] = Math.random() * 2 - 1;
+    const unlock = () => {
+      if (config.enabled) {
+        getContext();
+      }
+      window.removeEventListener('pointerdown', unlock, true);
+      window.removeEventListener('keydown', unlock, true);
+    };
+
+    window.addEventListener('pointerdown', unlock, { capture: true, passive: true });
+    window.addEventListener('keydown', unlock, { capture: true, passive: true });
+  }
+
+  let activeSuspenseNodes = [];
+
+  function stopSuspenseMusic() {
+    if (!activeSuspenseNodes.length) return;
+    const nodes = activeSuspenseNodes;
+    activeSuspenseNodes = [];
+    nodes.forEach(({ osc, gain }) => {
+      try {
+        if (gain && ctx) {
+          gain.gain.cancelScheduledValues(ctx.currentTime);
+          gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+        }
+        if (osc) osc.stop();
+      } catch {
+        // Ignore already-stopped oscillator errors
+      }
+    });
+  }
+
+  function playToneSequence(notes, trackList) {
+    const audioCtx = getContext();
+    if (!audioCtx || !masterGain) return false;
+    const now = audioCtx.currentTime;
+    notes.forEach((n) => {
+      try {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = n.type || 'sine';
+        const start = now + (n.delay || 0);
+        const dur = n.duration || 0.18;
+        osc.frequency.setValueAtTime(n.freq || 440, start);
+        if (n.endFreq) {
+          osc.frequency.exponentialRampToValueAtTime(Math.max(20, n.endFreq), start + dur);
+        }
+        const peak = Math.max(0.001, n.gain || 0.25);
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.linearRampToValueAtTime(peak, start + Math.min(0.03, dur * 0.25));
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+        osc.connect(gain);
+        gain.connect(masterGain);
+        osc.start(start);
+        osc.stop(start + dur + 0.02);
+        if (Array.isArray(trackList)) {
+          trackList.push({ osc, gain });
+        }
+      } catch {
+        // Ignore oscillator error
+      }
+    });
+    return true;
+  }
+
+  function playFilteredNoise(options = {}) {
+    const audioCtx = getContext();
+    if (!audioCtx || !masterGain) return false;
+    try {
+      const duration = Math.max(0.05, Number(options.duration) || 0.5);
+      const start = audioCtx.currentTime + (Number(options.delay) || 0);
+      const sampleRate = audioCtx.sampleRate || 44100;
+      const frameCount = Math.max(1, Math.floor(sampleRate * duration));
+      const buffer = audioCtx.createBuffer(1, frameCount, sampleRate);
+      const channel = buffer.getChannelData(0);
+      for (let i = 0; i < frameCount; i += 1) {
+        channel[i] = Math.random() * 2 - 1;
       }
 
-      const noise = ctx.createBufferSource();
-      noise.buffer = noiseBuffer;
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
 
-      const filter = ctx.createBiquadFilter();
-      filter.type = "bandpass";
-      filter.frequency.setValueAtTime(920, now);
-      filter.frequency.exponentialRampToValueAtTime(340, now + duration);
-      filter.Q.value = 1.8;
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = options.filterType || 'bandpass';
+      filter.frequency.setValueAtTime(options.startFreq || 960, start);
+      if (options.endFreq) {
+        filter.frequency.exponentialRampToValueAtTime(Math.max(40, options.endFreq), start + duration);
+      }
+      filter.Q.value = options.q || 1.6;
 
-      const gain = ctx.createGain();
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.linearRampToValueAtTime(vol, now + 0.12);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      const gain = audioCtx.createGain();
+      const peak = Math.max(0.001, Number(options.gain) || 0.22);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.linearRampToValueAtTime(peak, start + Math.min(0.1, duration * 0.25));
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
 
-      noise.connect(filter);
+      source.connect(filter);
       filter.connect(gain);
-      gain.connect(ctx.destination);
-      noise.start(now);
-      noise.stop(now + duration);
-
-      // Gentle falling vocal sigh tone underneath
-      const osc = ctx.createOscillator();
-      const oscGain = ctx.createGain();
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(310, now);
-      osc.frequency.exponentialRampToValueAtTime(175, now + duration);
-      oscGain.gain.setValueAtTime(0.0001, now);
-      oscGain.gain.linearRampToValueAtTime(vol * 0.45, now + 0.1);
-      oscGain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-      osc.connect(oscGain);
-      oscGain.connect(ctx.destination);
-      osc.start(now);
-      osc.stop(now + duration);
+      gain.connect(masterGain);
+      source.start(start);
+      source.stop(start + duration + 0.02);
+      return true;
     } catch {
-      // Silent no-op when audio device/context is unavailable
+      return false;
     }
   }
 
-  function playPanicPip() {
-    const ctx = getContext();
-    if (!ctx) return;
-    try {
-      const now = ctx.currentTime;
-      const vol = Math.max(0, Math.min(1, AudioEngine.volume)) * 0.18;
-      const pips = [
-        { offset: 0, freq: 880 },
-        { offset: 0.085, freq: 1175 },
+  loadConfig();
+  bindFirstGestureUnlock();
+
+  const AudioModule = {
+    getConfig() {
+      return { ...config };
+    },
+    isMuted() {
+      return !config.enabled;
+    },
+    setEnabled(enabled) {
+      config.enabled = Boolean(enabled);
+      if (!config.enabled) stopSuspenseMusic();
+      syncMasterGain();
+      if (!config.enabled && ctx && ctx.state === 'running' && typeof ctx.suspend === 'function') {
+        const res = ctx.suspend();
+        if (res && typeof res.catch === 'function') res.catch(() => {});
+      } else if (config.enabled) {
+        getContext();
+      }
+      saveConfig();
+      return config.enabled;
+    },
+    setVolume(vol) {
+      config.volume = clampVolume(vol);
+      syncMasterGain();
+      saveConfig();
+      return config.volume;
+    },
+    toggleMute() {
+      return this.setEnabled(!config.enabled);
+    },
+    resume() {
+      return Boolean(getContext());
+    },
+    stopSuspenseMusic,
+    playSigh() {
+      const noiseOk = playFilteredNoise({
+        duration: 0.62,
+        startFreq: 980,
+        endFreq: 310,
+        q: 1.8,
+        gain: 0.24
+      });
+      const toneOk = playToneSequence([
+        { type: 'triangle', freq: 310, endFreq: 175, duration: 0.45, gain: 0.24 },
+        { type: 'sine', freq: 240, endFreq: 130, delay: 0.08, duration: 0.5, gain: 0.18 }
+      ]);
+      return noiseOk || toneOk;
+    },
+    playDisappointmentDing() {
+      return playToneSequence([
+        { type: 'sine', freq: 740, endFreq: 710, duration: 0.16, gain: 0.25 },
+        { type: 'triangle', freq: 520, endFreq: 460, delay: 0.14, duration: 0.28, gain: 0.28 }
+      ]);
+    },
+    playPanicPip() {
+      return playToneSequence([
+        { type: 'square', freq: 880, endFreq: 960, duration: 0.07, gain: 0.18 },
+        { type: 'square', freq: 1040, endFreq: 1180, delay: 0.08, duration: 0.08, gain: 0.2 },
+        { type: 'square', freq: 1240, endFreq: 980, delay: 0.17, duration: 0.09, gain: 0.18 }
+      ]);
+    },
+    playGuiltPop() {
+      return playToneSequence([
+        { type: 'sine', freq: 420, endFreq: 260, duration: 0.12, gain: 0.24 }
+      ]);
+    },
+    playOrchestralSting() {
+      return playToneSequence([
+        { type: 'sawtooth', freq: 146.8, endFreq: 138, duration: 0.7, gain: 0.26 },
+        { type: 'sawtooth', freq: 220, endFreq: 207.6, duration: 0.7, gain: 0.22 },
+        { type: 'sawtooth', freq: 311.1, endFreq: 293.6, duration: 0.75, gain: 0.24 }
+      ]);
+    },
+    playSuspenseMusic(durationSec = 5) {
+      stopSuspenseMusic();
+      const total = Math.max(1.5, Number(durationSec) || 5);
+      const notes = [
+        // Low ominous drone spanning the countdown
+        { type: 'sine', freq: 98, endFreq: 110, duration: Math.max(1.2, total - 0.15), delay: 0.0, gain: 0.12 }
       ];
 
-      pips.forEach(function (pip) {
-        const start = now + pip.offset;
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = "triangle";
-        osc.frequency.setValueAtTime(pip.freq, start);
-        osc.frequency.exponentialRampToValueAtTime(pip.freq * 1.12, start + 0.065);
-        gain.gain.setValueAtTime(0.0001, start);
-        gain.gain.linearRampToValueAtTime(vol, start + 0.01);
-        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.075);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start(start);
-        osc.stop(start + 0.08);
-      });
-    } catch {
-      // Silent no-op when audio device/context is unavailable
+      // Escalating half-step tension pulse that accelerates over the 5s window
+      const pulsePattern = [196, 207.65, 196, 233.08];
+      let t = 0;
+      let step = 0;
+      const pulseCutoff = Math.max(0.8, total - 0.55);
+      while (t < pulseCutoff) {
+        const progress = t / pulseCutoff;
+        const interval = Math.max(0.22, 0.46 - progress * 0.22);
+        const dur = Math.min(interval * 0.85, pulseCutoff - t + 0.08);
+        const freq = pulsePattern[step % pulsePattern.length] * (1 + progress * 0.12);
+        notes.push({
+          type: 'triangle',
+          freq,
+          duration: Math.max(0.14, dur),
+          delay: t,
+          gain: 0.18 + progress * 0.1
+        });
+        t += interval;
+        step += 1;
+      }
+
+      // Dramatic resolving sting at the end of the countdown
+      notes.push(
+        { type: 'sawtooth', freq: 220, endFreq: 233.08, duration: 0.45, delay: Math.max(0, total - 0.5), gain: 0.16 },
+        { type: 'triangle', freq: 311.13, endFreq: 293.66, duration: 0.48, delay: Math.max(0, total - 0.48), gain: 0.22 }
+      );
+
+      return playToneSequence(notes, activeSuspenseNodes);
+    },
+    playSadViolin() {
+      return playToneSequence([
+        { type: 'sawtooth', freq: 440, endFreq: 415.3, duration: 0.45, delay: 0.0, gain: 0.16 },
+        { type: 'sawtooth', freq: 392, endFreq: 349.2, duration: 0.55, delay: 0.42, gain: 0.18 },
+        { type: 'sawtooth', freq: 329.6, endFreq: 293.7, duration: 0.75, delay: 0.95, gain: 0.2 }
+      ]);
+    },
+    playAngryBuzz() {
+      return playToneSequence([
+        { type: 'sawtooth', freq: 130, endFreq: 98, duration: 0.22, gain: 0.3 },
+        { type: 'square', freq: 165, endFreq: 110, delay: 0.05, duration: 0.22, gain: 0.24 }
+      ]);
+    },
+    playSupportiveChime() {
+      return playToneSequence([
+        { type: 'sine', freq: 523.25, duration: 0.16, delay: 0.0, gain: 0.2 },
+        { type: 'sine', freq: 659.25, duration: 0.18, delay: 0.1, gain: 0.22 },
+        { type: 'sine', freq: 783.99, duration: 0.28, delay: 0.2, gain: 0.24 }
+      ]);
+    },
+    playRoastPop() {
+      return playToneSequence([
+        { type: 'triangle', freq: 360, endFreq: 580, duration: 0.11, gain: 0.22 },
+        { type: 'sine', freq: 580, endFreq: 440, delay: 0.1, duration: 0.14, gain: 0.2 }
+      ]);
+    },
+    playRageBuzzer() {
+      return playToneSequence([
+        { type: 'sawtooth', freq: 155, endFreq: 140, duration: 0.16, delay: 0.0, gain: 0.28 },
+        { type: 'square', freq: 118, endFreq: 105, duration: 0.22, delay: 0.14, gain: 0.3 }
+      ]);
+    },
+    playCornerZip() {
+      return playToneSequence([
+        { type: 'sine', freq: 480, endFreq: 960, duration: 0.09, gain: 0.17 }
+      ]);
+    },
+    playShrinkSqueak() {
+      return playToneSequence([
+        { type: 'triangle', freq: 820, endFreq: 1320, duration: 0.08, gain: 0.16 }
+      ]);
     }
-  }
-
-  const AudioEngine = {
-    enabled: true,
-    volume: 0.5,
-
-    isMuted: function () {
-      return !this.enabled;
-    },
-
-    setMuted: function (muted) {
-      this.enabled = !muted;
-      return this.enabled;
-    },
-
-    toggleMute: function () {
-      this.enabled = !this.enabled;
-      return !this.enabled;
-    },
-
-    playSigh: playSigh,
-    playDisappointmentDing: noop,
-    playPanicPip: playPanicPip,
-    playGuiltPop: noop,
-    playOrchestralSting: noop,
-    playSuspenseMusic: noop,
-    playSadViolin: noop,
-    playAngryBuzz: noop,
-    playSupportiveChime: noop,
-    playRoastPop: noop,
-    playRageBuzzer: noop,
-    playCornerZip: noop,
-    playShrinkSqueak: noop,
   };
 
-  YP.Audio = AudioEngine;
-})(typeof window !== "undefined" ? window : globalThis);
+  root.YP.Audio = AudioModule;
+})();

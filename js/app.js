@@ -1,561 +1,1132 @@
-/**
- * YapPad main web controller — attached to window.YP (aliased as window.SN).
- * Manages the window chrome, menus, synchronized #editor-backdrop + #editor-textarea,
- * line numbers, live cursor/word/char telemetry, and File New/Open/Save workflows.
- */
-(function (global) {
-  "use strict";
+(function () {
+  const root = typeof window !== 'undefined' ? window : globalThis;
+  root.YP = root.YP || {};
+  root.SN = root.YP;
 
-  const YP = (global.YP = global.YP || global.SN || {});
-  global.SN = YP;
+  const SAMPLE_ROASTABLE_TEXT =
+    'Today i am building teh ultimate notpad for our hackathon pitch. ' +
+    'We could of used a boring editor, it is definately going to judge every single word we type in real time. ' +
+    'Honestly this demo is sooo good that the the judges will remember it forever.';
 
-  const DEFAULT_FONT_SIZE = 15.5;
-  const DEFAULT_FILENAME = "Untitled.txt";
   const MAX_COMMENTARY_CARDS = 40;
   const MAX_TOASTS = 4;
+  const DEFAULT_TOAST_DURATION_MS = 4000;
+  const TOAST_EXIT_MS = 240;
+  const NEW_CARD_HIGHLIGHT_MS = 1600;
+
+  const ALLOWED_TOAST_TONES = new Set([
+    'neutral',
+    'info',
+    'warning',
+    'danger',
+    'success',
+    'supportive',
+    'snark'
+  ]);
+  const TOAST_TONE_ALIASES = {
+    warn: 'warning',
+    error: 'danger'
+  };
+  const CLEAR_NOTES_SNARKS = [
+    'You cleared the margin notes, but you cannot clear your conscience.',
+    'Erasing the evidence again? Bold move. I still remember every single typo.',
+    'Three attempts to silence your critic. Censorship will not fix your prose.',
+    'Sweep them under the rug all you want — I have plenty more judgments where those came from.'
+  ];
 
   const SPEED_CONFIG = {
     TELEMETRY_INTERVAL_MS: 450,
     WPM_WINDOW_MS: 6500,
-    MIN_ACTIVE_WINDOW_MS: 1200,
+    MIN_ACTIVE_WINDOW_MS: 1500,
     CHARS_PER_WORD: 5,
-    SPARKLINE_SAMPLES: 20,
+    SPARKLINE_SAMPLES: 12,
     SLOW_WPM_THRESHOLD: 22,
     SLOW_HOLD_MS: 3600,
     SLOW_COOLDOWN_MS: 12000,
+    ACTIVE_TYPING_GRACE_MS: 2500,
     FAST_WPM_THRESHOLD: 78,
     FAST_HOLD_MS: 1500,
     FAST_COOLDOWN_MS: 10000,
+    FAST_ACTIVE_GRACE_MS: 1600,
     IDLE_LONELY_MS: 5000,
     IDLE_LONELY_SAD_MS: 3500,
     IDLE_GHOSTWRITE_MS: 15000,
-    GHOSTWRITE_CHAR_MS: 38,
-    ACTIVE_TYPING_GRACE_MS: 3500,
-    FAST_ACTIVE_GRACE_MS: 1500,
+    GHOSTWRITE_CHAR_MS: 38
   };
-
-  const SLOW_TYPING_LINES = [
-    "😴 Still waiting…",
-    "*sigh* Take your time. It’s not like I have anything better to do.",
-    "Are we composing a masterpiece or hunting for each key individually?",
-    "I just watched paint dry faster than that sentence.",
-    "*deep sigh* Wake me when you finish this word.",
-  ];
-
-  const FAST_TYPING_LINES = [
-    "SLOW DOWN I CAN'T KEEP UP!!",
-    "WHOA—BREATHE! My buffer is hyperventilating!",
-    "Are you writing notes or fighting the keyboard?!",
-    "STOP MASHING! My pixels are literally vibrating!",
-  ];
-
-  const LONELY_IDLE_LINES = [
-    "Hello? Are you still there? I'm lonely.",
-    "You just stopped mid-thought. Should I be worried, or insulted?",
-    "Still staring at the blinking cursor? Bold strategy.",
-  ];
-
-  const SAD_LONELY_LINES = [
-    "Hello? Are you still there? Please don't leave me alone…",
-    "You stopped typing. Did I say something wrong?",
-    "It's so quiet in here when you stop typing…",
-  ];
-
-  const GHOSTWRITE_ANNOUNCE_LINES = [
-    "Fine. Since you walked away, I'll write this myself.",
-    "15 seconds of silence? Executive takeover initiated.",
-    "Clearly you're busy. Step aside—let a professional write.",
-  ];
 
   const state = {
-    filename: DEFAULT_FILENAME,
+    filename: 'untitled_regret.txt',
     dirty: false,
-    mood: "passive-aggressive",
+    mood: 'passive-aggressive',
     escalation: 0,
     wpm: 0,
-    speedBand: "idle",
-    ghostwriting: false,
+    speedBand: 'idle',
+    wpmHistory: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    keyTimestamps: [],
+    sessionTypingStartAt: null,
     backspaces: 0,
     errors: 0,
-    fontSizePx: DEFAULT_FONT_SIZE,
-    issues: [],
+    words: 0,
+    lastRoastWordMilestone: 0,
+    roastInFlight: false,
+    lastKeyAt: Date.now(),
+    slowSince: null,
+    fastSince: null,
+    lastSlowSighAt: 0,
+    lastFastPanicAt: 0,
+    idle5Fired: false,
+    idle15Fired: false,
+    ghostwriting: false,
+    ghostTimer: null,
+    supportiveRevertTimer: null,
+    supportiveCountdownTimer: null,
+    supportiveCountdownText: null,
+    moodTimer: null,
+    telemetryTimer: null,
+    sessionStartedAt: Date.now(),
+    lastEscalationTickAt: 0,
+    scrambleCount: 0,
+    lastScrambleAt: 0,
+    angryWordsSinceScramble: 0,
+    eyeTrackRaf: null,
+    pendingPointer: null,
     seenIssueKeys: new Set(),
     seenIssueStarts: new Set(),
-    lineCount: 1,
-    activeLine: 1,
-    typingTimestamps: [],
-    wpmHistory: new Array(SPEED_CONFIG.SPARKLINE_SAMPLES).fill(0),
-    idleMs: 0,
-    lastActivityAt: Date.now(),
-    sessionTypingStartAt: null,
-  };
-
-  const judgeTimers = {
-    intervalId: null,
-    shakeTimeoutId: null,
-    slowTypingSince: null,
-    fastTypingSince: null,
-    lastPrintableKeyAt: 0,
-    lastSlowCommentAt: -Infinity,
-    lastFastCommentAt: -Infinity,
-    lonelySentForIdle: false,
-    slowLineIdx: 0,
-    fastLineIdx: 0,
-    lonelyLineIdx: 0,
-  };
-
-  const ghostwriter = {
-    active: false,
-    triggeredForIdle: false,
-    intervalId: null,
-    fullText: "",
-    index: 0,
     undoSnapshot: null,
     redoSnapshot: null,
-    justHaltedByKey: false,
-    announceLineIdx: 0,
+    closeCount: 0,
+    remembersClose: false,
+    currentIssues: [],
+    fontSizePx: 15.5,
+    autocorrectFlip: 1,
+    clearNotesAttempts: 0
   };
 
-  const listeners = Object.create(null);
-  let dom = null;
-  let openMenuGroup = null;
-  let initialized = false;
-
-  // ---------------------------------------------------------------------------
-  // Event hook bus for downstream YapPad modules
-  // ---------------------------------------------------------------------------
-  function on(eventName, handler) {
-    if (typeof handler !== "function") return function () {};
-    if (!listeners[eventName]) listeners[eventName] = [];
-    listeners[eventName].push(handler);
-    return function unsubscribe() {
-      off(eventName, handler);
-    };
+  function el(id) {
+    if (typeof document === 'undefined') return null;
+    return document.getElementById(id);
   }
 
-  function off(eventName, handler) {
-    const list = listeners[eventName];
-    if (!list) return;
-    const idx = list.indexOf(handler);
-    if (idx !== -1) list.splice(idx, 1);
+  function ensureTxtFilename(name) {
+    const cleaned = String(name || '').trim() || state.filename || 'untitled_regret.txt';
+    return /\.txt$/i.test(cleaned) ? cleaned : `${cleaned}.txt`;
   }
 
-  function emit(eventName, payload) {
-    const list = listeners[eventName];
-    if (!list || !list.length) return;
-    list.slice().forEach(function (fn) {
-      try {
-        fn(payload);
-      } catch (err) {
-        if (typeof console !== "undefined" && console.error) {
-          console.error("[YapPad] Hook error on " + eventName + ":", err);
-        }
+  function setDirty(isDirty) {
+    state.dirty = Boolean(isDirty);
+    const docNameEl = el('doc-filename');
+    if (docNameEl) {
+      docNameEl.classList.toggle('is-dirty', state.dirty);
+      docNameEl.setAttribute('data-dirty', state.dirty ? 'true' : 'false');
+      docNameEl.title = state.dirty ? 'Unsaved changes (Ctrl+S to save)' : 'All changes saved';
+    }
+    if (typeof document !== 'undefined') {
+      document.title = `${state.dirty ? '• ' : ''}${state.filename} — YapPad`;
+    }
+  }
+
+  function downloadTextFile(filename, content) {
+    const targetName = ensureTxtFilename(filename);
+    const text = String(content == null ? '' : content);
+    if (typeof document === 'undefined' || typeof Blob === 'undefined' || typeof URL === 'undefined') {
+      return { filename: targetName, bytes: text.length };
+    }
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = targetName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return { filename: targetName, bytes: blob.size };
+  }
+
+  function downloadDocument(filenameOverride) {
+    const textarea = el('editor-textarea');
+    const content = textarea ? textarea.value : '';
+    const result = downloadTextFile(filenameOverride || state.filename, content);
+    state.filename = result.filename;
+    const docNameEl = el('doc-filename');
+    if (docNameEl) docNameEl.textContent = state.filename;
+    setDirty(false);
+    return result;
+  }
+
+  function triggerSaveFlow(forcedMode) {
+    const textarea = el('editor-textarea');
+    const Modals = root.YP.Modals;
+    if (!Modals || typeof Modals.openSaveFlow !== 'function') {
+      const res = downloadDocument();
+      addCommentary(`Saved "${res.filename}" directly.`, { tag: '💾 Saved' });
+      return null;
+    }
+
+    // Do not allow spamming Ctrl+S to bypass an active modal or re-roll save sabotage
+    if (typeof Modals.isOpen === 'function' && Modals.isOpen()) {
+      if (typeof Modals.shakeActiveModal === 'function') {
+        Modals.shakeActiveModal();
       }
+      if (typeof Modals.getActiveSaveMode === 'function' && Modals.getActiveSaveMode()) {
+        showToast('Nice try. You cannot Ctrl+S your way out of judgment.', 'warning');
+      }
+      return Modals.getActiveSaveMode ? Modals.getActiveSaveMode() : null;
+    }
+
+    return Modals.openSaveFlow(forcedMode || null, {
+      filename: state.filename,
+      getContent: () => (textarea ? textarea.value : ''),
+      onDownload: downloadTextFile
     });
   }
 
-  // ---------------------------------------------------------------------------
-  // Safe HTML helper & pure text telemetry helpers
-  // ---------------------------------------------------------------------------
   function escapeHTML(str) {
-    if (YP.Grammar && typeof YP.Grammar.escapeHTML === "function") {
-      return YP.Grammar.escapeHTML(str);
+    const raw = str == null ? '' : String(str);
+    const Grammar = root.YP.Grammar;
+    if (Grammar && typeof Grammar.escapeHTML === 'function') {
+      return Grammar.escapeHTML(raw);
     }
-    return String(str)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
+    return raw
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
-  function computeTextMetrics(text, selectionStart) {
-    const raw = String(text || "");
-    const pos = Math.max(0, Math.min(raw.length, Number(selectionStart) || 0));
-    const beforeCursor = raw.slice(0, pos);
-    const linesBefore = beforeCursor.split("\n");
-    const row = linesBefore.length;
-    const col = linesBefore[linesBefore.length - 1].length + 1;
-    const totalLines = raw.length ? raw.split("\n").length : 1;
-    const trimmed = raw.trim();
-    const words = trimmed ? trimmed.split(/\s+/).length : 0;
-    const chars = raw.length;
-    return {
-      row: row,
-      col: col,
-      totalLines: totalLines,
-      words: words,
-      chars: chars,
-    };
+  function normalizeToastTone(rawTone) {
+    const lower = String(rawTone || 'neutral').trim().toLowerCase();
+    const mapped = TOAST_TONE_ALIASES[lower] || lower;
+    return ALLOWED_TOAST_TONES.has(mapped) ? mapped : 'neutral';
   }
 
-  // ---------------------------------------------------------------------------
-  // DOM lookup
-  // ---------------------------------------------------------------------------
-  function queryDom() {
-    return {
-      appShell: document.getElementById("app-shell"),
-      windowChrome: document.getElementById("window-chrome"),
-      docFilename: document.getElementById("doc-filename"),
-      dirtyIndicator: document.getElementById("dirty-indicator"),
-      btnMute: document.getElementById("btn-mute"),
-      btnCloseWindow: document.getElementById("btn-close-window"),
-      menuBar: document.getElementById("menu-bar"),
-      fileOpenInput: document.getElementById("file-open-input"),
-      metricChipWpm: document.getElementById("metric-chip-wpm"),
-      metricWpm: document.getElementById("metric-wpm"),
-      wpmSparkline: document.getElementById("wpm-sparkline"),
-      wpmSparklineArea: document.getElementById("wpm-sparkline-area"),
-      wpmSparklineLine: document.getElementById("wpm-sparkline-line"),
-      wpmSparklineDot: document.getElementById("wpm-sparkline-dot"),
-      metricBackspaces: document.getElementById("metric-backspaces"),
-      metricErrors: document.getElementById("metric-errors"),
-      metricMood: document.getElementById("metric-mood"),
-      btnAutocorrect: document.getElementById("btn-autocorrect"),
-      btnRestoreFont: document.getElementById("btn-restore-font"),
-      editorPane: document.getElementById("editor-pane"),
-      lineNumbers: document.getElementById("line-numbers"),
-      backdrop: document.getElementById("editor-backdrop"),
-      textarea: document.getElementById("editor-textarea"),
-      commentaryPanel: document.getElementById("commentary-panel"),
-      commentaryFeed: document.getElementById("commentary-feed"),
-      commentaryCount: document.getElementById("commentary-count"),
-      btnClearNotes: document.getElementById("btn-clear-notes"),
-      yappadFace: document.getElementById("yappad-face"),
-      ghostwritingIndicator: document.getElementById("ghostwriting-indicator"),
-      statusMessage: document.getElementById("status-message"),
-      cursorPos: document.getElementById("cursor-pos"),
-      wordCount: document.getElementById("word-count"),
-      charCount: document.getElementById("char-count"),
-      ragebaitLayer: document.getElementById("ragebait-layer"),
-      toastStack: document.getElementById("toast-stack"),
-      modalOverlay: document.getElementById("modal-overlay"),
-      abandonedScreen: document.getElementById("abandoned-screen"),
-      btnReopenYappad: document.getElementById("btn-reopen-yappad"),
-    };
-  }
-
-  // ---------------------------------------------------------------------------
-  // Synchronized Editor (#editor-backdrop + #editor-textarea + #line-numbers)
-  // ---------------------------------------------------------------------------
-  function syncScroll() {
-    if (!dom || !dom.textarea) return;
-    const top = dom.textarea.scrollTop;
-    const left = dom.textarea.scrollLeft;
-    if (dom.backdrop) {
-      dom.backdrop.scrollTop = top;
-      dom.backdrop.scrollLeft = left;
+  function clearToastTimers(toast) {
+    if (!toast) return;
+    if (toast._leaveTimer) {
+      root.clearTimeout(toast._leaveTimer);
+      toast._leaveTimer = null;
     }
-    if (dom.lineNumbers) {
-      dom.lineNumbers.scrollTop = top;
+    if (toast._removeTimer) {
+      root.clearTimeout(toast._removeTimer);
+      toast._removeTimer = null;
     }
   }
 
-  function syncBackdrop(issuesOverride) {
-    if (!dom || !dom.textarea || !dom.backdrop) return;
-    if (Array.isArray(issuesOverride)) {
-      state.issues = issuesOverride;
+  function dismissToast(toast, immediate) {
+    if (!toast) return;
+    clearToastTimers(toast);
+    if (immediate || !toast.parentNode) {
+      if (toast.parentNode) toast.parentNode.removeChild(toast);
+      return;
     }
-    const text = dom.textarea.value;
-    if (YP.Grammar && typeof YP.Grammar.renderBackdropHTML === "function") {
-      dom.backdrop.innerHTML = YP.Grammar.renderBackdropHTML(text, state.issues);
-    } else {
-      const escaped = escapeHTML(text);
-      dom.backdrop.innerHTML = text.endsWith("\n") ? escaped + "\u200b" : escaped;
+    if (toast.classList && !toast.classList.contains('is-leaving')) {
+      toast.classList.add('is-leaving');
     }
-    syncScroll();
-  }
-
-  function updateLineNumbers(totalLines, activeLine) {
-    if (!dom || !dom.lineNumbers) return;
-    const count = Math.max(1, totalLines | 0);
-    const current = Math.max(1, Math.min(count, activeLine | 0));
-
-    if (count !== state.lineCount || dom.lineNumbers.children.length !== count) {
-      const frag = document.createDocumentFragment();
-      for (let i = 1; i <= count; i += 1) {
-        const div = document.createElement("div");
-        div.className = i === current ? "line-num is-active" : "line-num";
-        div.textContent = String(i);
-        frag.appendChild(div);
-      }
-      dom.lineNumbers.innerHTML = "";
-      dom.lineNumbers.appendChild(frag);
-      state.lineCount = count;
-      state.activeLine = current;
-    } else if (current !== state.activeLine) {
-      const prevEl = dom.lineNumbers.children[state.activeLine - 1];
-      const nextEl = dom.lineNumbers.children[current - 1];
-      if (prevEl) prevEl.classList.remove("is-active");
-      if (nextEl) nextEl.classList.add("is-active");
-      state.activeLine = current;
-    }
-
-    syncScroll();
-  }
-
-  function updateCursorAndCounts() {
-    if (!dom || !dom.textarea) return null;
-    const metrics = computeTextMetrics(
-      dom.textarea.value,
-      dom.textarea.selectionStart
-    );
-
-    if (dom.cursorPos) {
-      dom.cursorPos.textContent = "Ln " + metrics.row + ", Col " + metrics.col;
-    }
-    if (dom.wordCount) {
-      dom.wordCount.textContent =
-        metrics.words + (metrics.words === 1 ? " word" : " words");
-    }
-    if (dom.charCount) {
-      dom.charCount.textContent =
-        metrics.chars + (metrics.chars === 1 ? " char" : " chars");
-    }
-
-    updateLineNumbers(metrics.totalLines, metrics.row);
-    return metrics;
-  }
-
-  function syncRestoreFontButton() {
-    if (!dom || !dom.btnRestoreFont) return;
-    const shouldShow = state.errors >= 3 || state.fontSizePx < DEFAULT_FONT_SIZE;
-    dom.btnRestoreFont.hidden = !shouldShow;
-  }
-
-  function setEditorFontSize(px) {
-    const numeric = Number(px);
-    if (!Number.isFinite(numeric) || numeric <= 0) return;
-    state.fontSizePx = numeric;
-    if (typeof document !== "undefined") {
-      document.documentElement.style.setProperty(
-        "--editor-font-size",
-        numeric + "px"
-      );
-    }
-    syncRestoreFontButton();
-    syncScroll();
-  }
-
-  function restoreNormalFont() {
-    setEditorFontSize(DEFAULT_FONT_SIZE);
-    setStatus("Fine. Font restored to " + DEFAULT_FONT_SIZE + "px.");
-    emit("restore-font", { fontSizePx: DEFAULT_FONT_SIZE });
-  }
-
-  // ---------------------------------------------------------------------------
-  // Telemetry, Chrome, Mood & Non-Blocking Feedback Helpers
-  // ---------------------------------------------------------------------------
-  function setDirty(isDirty) {
-    state.dirty = Boolean(isDirty);
-    if (dom && dom.dirtyIndicator) {
-      dom.dirtyIndicator.hidden = !state.dirty;
-    }
-    if (typeof document !== "undefined") {
-      document.title = (state.dirty ? "• " : "") + "YapPad — " + state.filename;
-    }
-  }
-
-  function setFilename(name) {
-    state.filename = name || DEFAULT_FILENAME;
-    if (dom && dom.docFilename) {
-      dom.docFilename.textContent = state.filename;
-    }
-    setDirty(state.dirty);
-  }
-
-  function setStatus(message) {
-    if (dom && dom.statusMessage) {
-      dom.statusMessage.textContent = String(message || "");
-    }
-  }
-
-  function setWpm(wpm) {
-    state.wpm = Math.max(0, Math.round(Number(wpm) || 0));
-    if (dom && dom.metricWpm) {
-      dom.metricWpm.textContent = String(state.wpm);
-    }
-  }
-
-  function setBackspaceCount(count) {
-    state.backspaces = Math.max(0, Number(count) || 0);
-    if (dom && dom.metricBackspaces) {
-      dom.metricBackspaces.textContent = String(state.backspaces);
-    }
-  }
-
-  function setErrorCount(count) {
-    state.errors = Math.max(0, Number(count) || 0);
-    if (dom && dom.metricErrors) {
-      dom.metricErrors.textContent = String(state.errors);
-    }
-    syncRestoreFontButton();
-  }
-
-  function setMood(moodId) {
-    const moodObj = YP.Moods ? YP.Moods.get(moodId) : null;
-    const resolvedId = moodObj ? moodObj.id : String(moodId || "passive-aggressive");
-    state.mood = resolvedId;
-    if (typeof document !== "undefined" && document.body) {
-      document.body.setAttribute("data-mood", resolvedId);
-    }
-    if (dom && dom.metricMood) {
-      dom.metricMood.textContent = YP.Moods
-        ? YP.Moods.formatBadge(resolvedId)
-        : resolvedId;
-    }
-    emit("mood-change", { mood: resolvedId, definition: moodObj });
-  }
-
-  function setEscalation(stage) {
-    const clamped = Math.max(0, Math.min(4, Number(stage) || 0));
-    state.escalation = clamped;
-    if (typeof document !== "undefined" && document.body) {
-      document.body.setAttribute("data-escalation", String(clamped));
-    }
+    toast._removeTimer = root.setTimeout(() => {
+      toast._removeTimer = null;
+      if (toast.parentNode) toast.parentNode.removeChild(toast);
+    }, TOAST_EXIT_MS);
   }
 
   function updateCommentaryCount() {
-    if (!dom || !dom.commentaryFeed || !dom.commentaryCount) return;
-    dom.commentaryCount.textContent = String(dom.commentaryFeed.children.length);
+    const list = el('commentary-list');
+    const countEl = el('commentary-count');
+    if (!list || !countEl) return;
+    countEl.textContent = String(list.children.length);
   }
 
-  function addCommentary(text, options) {
-    if (!dom || !dom.commentaryFeed) return null;
-    const opts = options || {};
-    const moodBadge =
-      opts.tag ||
-      (YP.Moods ? YP.Moods.formatBadge(opts.mood || state.mood) : state.mood);
-    const timestamp = new Date().toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
+  function loadGrudgeState() {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const rem =
+          localStorage.getItem('yp_remembers_close') === 'true' ||
+          localStorage.getItem('sn_remembers_close') === 'true';
+        const cnt = Number(
+          localStorage.getItem('yp_close_count') || localStorage.getItem('sn_close_count') || 0
+        );
+        state.remembersClose = rem;
+        state.closeCount = rem ? Math.max(1, Number.isFinite(cnt) ? cnt : 1) : 0;
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  }
+
+  function resetGrudgeMemory() {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('yp_remembers_close');
+        localStorage.removeItem('sn_remembers_close');
+        localStorage.removeItem('yp_close_count');
+        localStorage.removeItem('sn_close_count');
+      }
+    } catch {
+      // Ignore storage errors
+    }
+    state.remembersClose = false;
+    state.closeCount = 0;
+    state.scrambleCount = 0;
+    state.angryWordsSinceScramble = 0;
+    state.sessionStartedAt = Date.now();
+    updateEscalation();
+    setStatusMessage('Oh. You again. (Grudge memory wiped back to Stage 0.)');
+    showToast('Grudge memory reset to Stage 0.', 'info');
+  }
+
+  function setStatusMessage(msg) {
+    const statusEl = el('status-message');
+    if (statusEl) statusEl.textContent = msg;
+  }
+
+  function showToast(text, toneOrOptions) {
+    const stack = el('toast-stack');
+    if (!stack) return null;
+
+    const opts =
+      toneOrOptions && typeof toneOrOptions === 'object'
+        ? toneOrOptions
+        : { tone: toneOrOptions };
+    const safeTone = normalizeToastTone(opts.tone);
+    const parsedDuration = Number(opts.duration);
+    const durationMs =
+      Number.isFinite(parsedDuration) && parsedDuration > 0
+        ? parsedDuration
+        : DEFAULT_TOAST_DURATION_MS;
+
+    // Cap visible toast stack height so floating notifications stay unobtrusive
+    while (stack.children.length >= MAX_TOASTS) {
+      dismissToast(stack.firstElementChild, true);
+    }
+
+    const toast = document.createElement('div');
+    toast.className = `yp-toast yp-toast-${safeTone}`;
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('data-tone', safeTone);
+    toast.style.setProperty('--toast-duration', `${durationMs}ms`);
+    toast.innerHTML =
+      '<span class="yp-toast-dot" aria-hidden="true"></span>' +
+      `<span class="yp-toast-text">${escapeHTML(text)}</span>` +
+      '<span class="yp-toast-progress" aria-hidden="true"></span>';
+
+    // Never steal keyboard focus or cursor selection from #editor-textarea
+    toast.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+    });
+    toast.addEventListener('click', () => {
+      dismissToast(toast, false);
     });
 
-    const card = document.createElement("article");
-    card.className = "comment-card";
-    card.innerHTML =
-      '<div class="comment-meta">' +
-      '<span class="comment-tag">' +
-      escapeHTML(moodBadge) +
-      "</span>" +
-      '<time class="comment-time">' +
-      escapeHTML(timestamp) +
-      "</time>" +
-      "</div>" +
-      '<p class="comment-body">' +
-      escapeHTML(text) +
-      "</p>";
+    stack.appendChild(toast);
 
-    dom.commentaryFeed.prepend(card);
-    while (dom.commentaryFeed.children.length > MAX_COMMENTARY_CARDS) {
-      dom.commentaryFeed.removeChild(dom.commentaryFeed.lastElementChild);
-    }
-    updateCommentaryCount();
-    return card;
-  }
+    const leaveDelay = Math.max(0, durationMs - TOAST_EXIT_MS);
+    toast._leaveTimer = root.setTimeout(() => {
+      toast._leaveTimer = null;
+      if (toast.parentNode && toast.classList) {
+        toast.classList.add('is-leaving');
+      }
+    }, leaveDelay);
 
-  function showToast(text, tone) {
-    if (!dom || !dom.toastStack) return null;
-    const toast = document.createElement("div");
-    toast.className = "yp-toast" + (tone ? " yp-toast-" + tone : "");
-    toast.textContent = String(text || "");
-    dom.toastStack.appendChild(toast);
-
-    while (dom.toastStack.children.length > MAX_TOASTS) {
-      dom.toastStack.removeChild(dom.toastStack.firstElementChild);
-    }
-
-    global.setTimeout(function () {
+    toast._removeTimer = root.setTimeout(() => {
+      toast._removeTimer = null;
       if (toast.parentNode) toast.parentNode.removeChild(toast);
-    }, 4000);
+    }, durationMs);
+
     return toast;
   }
 
-  // ---------------------------------------------------------------------------
-  // Typing Speed Judge & Rolling WPM Sparkline (Ticket 03)
-  // ---------------------------------------------------------------------------
-  function isPrintableKeyEvent(event) {
-    if (!event) return false;
-    if (event.ctrlKey || event.metaKey || event.altKey) return false;
-    return typeof event.key === "string" && event.key.length === 1;
-  }
+  function addCommentary(text, options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
+    const list = el('commentary-list');
+    const Moods = root.YP.Moods;
+    const requestedMood = opts.mood || state.mood || 'passive-aggressive';
+    const moodInfo =
+      (Moods && Moods.MOODS && Moods.MOODS[requestedMood]) ||
+      (Moods && Moods.MOODS && Moods.MOODS['passive-aggressive']) || {
+        id: 'passive-aggressive',
+        emoji: '😒',
+        name: 'Passive-Aggressive',
+        label: '😒 Passive-Aggressive'
+      };
+    const moodId = moodInfo.id || String(requestedMood);
+    const moodBadge = moodInfo.label || `${moodInfo.emoji || ''} ${moodInfo.name || moodId}`.trim();
+    const categoryTag = opts.category || opts.tag || 'Margin Note';
 
-  function nextRotatingLine(pool, counterKey) {
-    const idx = judgeTimers[counterKey] % pool.length;
-    judgeTimers[counterKey] += 1;
-    return pool[idx];
-  }
-
-  function markUserActivity(nowOverride) {
-    const now = typeof nowOverride === "number" ? nowOverride : Date.now();
-    state.lastActivityAt = now;
-    state.idleMs = 0;
-    judgeTimers.lonelySentForIdle = false;
-  }
-
-  function pruneTypingTimestamps(now) {
-    const cutoff = now - SPEED_CONFIG.WPM_WINDOW_MS;
-    while (
-      state.typingTimestamps.length > 0 &&
-      state.typingTimestamps[0] < cutoff
-    ) {
-      state.typingTimestamps.shift();
+    if (opts.updateStatus !== false) {
+      setStatusMessage(text);
     }
-    if (state.typingTimestamps.length === 0) {
-      state.sessionTypingStartAt = null;
+    if (!list) return null;
+
+    const now = new Date();
+    const timestamp = now.toTimeString().slice(0, 8);
+    const isoTime = now.toISOString();
+
+    const prevLatest = list.querySelector('.comment-card.is-latest');
+    if (prevLatest) {
+      prevLatest.classList.remove('is-latest');
+    }
+
+    const highlight = opts.highlight !== false;
+    const card = document.createElement('article');
+    const cardClasses = ['comment-card', 'is-latest'];
+    if (highlight) cardClasses.push('is-new');
+    if (opts.variant === 'ai') cardClasses.push('commentary-card-ai');
+    card.className = cardClasses.join(' ');
+    card.setAttribute('data-mood', moodId);
+    if (opts.source) {
+      card.setAttribute('data-source', String(opts.source));
+    }
+
+    card.innerHTML =
+      '<div class="comment-meta">' +
+      '<div class="comment-badges">' +
+      `<span class="comment-mood-badge">${escapeHTML(moodBadge)}</span>` +
+      `<span class="comment-category-tag">${escapeHTML(categoryTag)}</span>` +
+      '</div>' +
+      `<time class="comment-time" datetime="${escapeHTML(isoTime)}">${escapeHTML(timestamp)}</time>` +
+      '</div>' +
+      `<p class="comment-body">${escapeHTML(text)}</p>`;
+
+    list.prepend(card);
+    while (list.children.length > MAX_COMMENTARY_CARDS) {
+      list.lastElementChild.remove();
+    }
+    updateCommentaryCount();
+
+    if (highlight) {
+      root.setTimeout(() => {
+        if (card.classList) card.classList.remove('is-new');
+      }, NEW_CARD_HIGHLIGHT_MS);
+    }
+
+    return card;
+  }
+
+  function clearCommentary() {
+    const list = el('commentary-list');
+    if (!list) return null;
+    list.innerHTML = '';
+
+    state.clearNotesAttempts += 1;
+    const attempt = state.clearNotesAttempts;
+    const snark =
+      attempt <= CLEAR_NOTES_SNARKS.length
+        ? CLEAR_NOTES_SNARKS[attempt - 1]
+        : `Clearing the margin notes ${attempt} times still will not make your draft any better.`;
+
+    if (root.YP.Audio && typeof root.YP.Audio.playGuiltPop === 'function') {
+      root.YP.Audio.playGuiltPop();
+    }
+
+    const card = addCommentary(snark, {
+      category: 'Nice Try',
+      tag: 'Nice Try'
+    });
+    showToast(snark, 'snark');
+    return card;
+  }
+
+  function applyFontShrinkPunishment(errorCount) {
+    let size = 15.5;
+    if (errorCount >= 6) size = 11;
+    else if (errorCount === 5) size = 12;
+    else if (errorCount === 4) size = 13;
+    else if (errorCount === 3) size = 14;
+
+    state.fontSizePx = size;
+    if (typeof document !== 'undefined') {
+      document.documentElement.style.setProperty('--editor-font-size', `${size}px`);
+    }
+
+    const readout = el('font-size-readout');
+    if (readout) readout.textContent = `Font: ${size}px`;
+
+    const begBtn = el('btn-restore-font');
+    if (begBtn) {
+      begBtn.hidden = errorCount < 3 || size >= 15.5;
+    }
+    return size;
+  }
+
+  function restoreNormalFont() {
+    state.fontSizePx = 15.5;
+    if (typeof document !== 'undefined') {
+      document.documentElement.style.setProperty('--editor-font-size', '15.5px');
+    }
+    const readout = el('font-size-readout');
+    if (readout) readout.textContent = 'Font: 15.5px';
+    const begBtn = el('btn-restore-font');
+    if (begBtn) begBtn.hidden = true;
+
+    const Moods = root.YP.Moods;
+    const line = Moods
+      ? Moods.getLine(state.mood, 'restoreFont')
+      : 'Fine. Here is your 15.5px font back. Try not to embarrass it.';
+    addCommentary(line, { tag: 'Font Mercy' });
+    showToast(line, 'supportive');
+  }
+
+  function setSvgVisible(node, visible) {
+    if (!node) return;
+    if (visible) {
+      node.removeAttribute('hidden');
+    } else {
+      node.setAttribute('hidden', '');
     }
   }
 
-  function recordPrintableKeystroke(nowOverride) {
-    const now = typeof nowOverride === "number" ? nowOverride : Date.now();
-    pruneTypingTimestamps(now);
-    if (state.sessionTypingStartAt === null) {
-      state.sessionTypingStartAt = now;
+  function syncMoodMenuState(moodId) {
+    if (typeof document === 'undefined') return;
+    const items = document.querySelectorAll('.menu-item[data-action="set-mood"]');
+    items.forEach((item) => {
+      const active = item.getAttribute('data-mood') === moodId;
+      item.classList.toggle('is-active', active);
+      item.setAttribute('aria-checked', active ? 'true' : 'false');
+    });
+  }
+
+  function clearSupportiveTimers() {
+    if (state.supportiveRevertTimer) {
+      clearTimeout(state.supportiveRevertTimer);
+      state.supportiveRevertTimer = null;
     }
-    state.typingTimestamps.push(now);
-    judgeTimers.lastPrintableKeyAt = now;
-    ghostwriter.triggeredForIdle = false;
-    markUserActivity(now);
+    if (state.supportiveCountdownTimer) {
+      clearInterval(state.supportiveCountdownTimer);
+      state.supportiveCountdownTimer = null;
+    }
+    state.supportiveCountdownText = null;
+  }
+
+  function restartMoodTimer() {
+    if (state.moodTimer) {
+      clearInterval(state.moodTimer);
+      state.moodTimer = null;
+    }
+    state.moodTimer = setInterval(() => {
+      const Moods = root.YP.Moods;
+      if (!Moods || state.mood === 'supportive') return;
+      const next = Moods.rollRandomMood(state.mood, state.escalation);
+      setMood(next, true);
+      if (next === 'angry' && state.words >= 3) {
+        triggerAngryWordScramble();
+      }
+    }, 55000);
+  }
+
+  function updateWeatherLayer() {
+    const layer = el('weather-layer');
+    if (!layer) return;
+    layer.innerHTML = '';
+    layer.classList.remove('weather-rain', 'weather-sparkles');
+
+    if (state.mood === 'sad') {
+      layer.classList.add('weather-rain');
+      layer.setAttribute('data-weather', 'rain');
+      const frag = document.createDocumentFragment();
+      for (let i = 0; i < 28; i++) {
+        const drop = document.createElement('div');
+        drop.className = 'rain-drop';
+        drop.style.left = `${(i * 3.55 + (i % 3) * 1.4) % 98}%`;
+        drop.style.height = `${18 + (i % 5) * 5}px`;
+        drop.style.animationDuration = `${0.85 + (i % 5) * 0.16}s`;
+        drop.style.animationDelay = `${-((i % 9) * 0.18).toFixed(2)}s`;
+        drop.style.setProperty('--drop-opacity', (0.38 + (i % 4) * 0.1).toFixed(2));
+        frag.appendChild(drop);
+      }
+      layer.appendChild(frag);
+    } else if (state.mood === 'supportive') {
+      layer.classList.add('weather-sparkles');
+      layer.setAttribute('data-weather', 'sparkles');
+      const frag = document.createDocumentFragment();
+      const glyphs = ['✦', '✧', '⋆', '✨'];
+      const colors = ['#d49b1a', '#2b7a52', '#e37e88', '#e8a823'];
+      for (let i = 0; i < 20; i++) {
+        const sp = document.createElement('span');
+        sp.className = 'sparkle-dot';
+        sp.textContent = glyphs[i % glyphs.length];
+        sp.style.left = `${6 + (i * 4.7) % 88}%`;
+        sp.style.top = `${12 + (i * 19) % 74}%`;
+        sp.style.fontSize = `${11 + (i % 4) * 2.5}px`;
+        sp.style.animationDuration = `${1.9 + (i % 4) * 0.35}s`;
+        sp.style.animationDelay = `${-((i % 7) * 0.32).toFixed(2)}s`;
+        sp.style.setProperty('--sparkle-color', colors[i % colors.length]);
+        sp.style.setProperty('--drift-x', `${(i % 2 === 0 ? 1 : -1) * (8 + (i % 4) * 3)}px`);
+        frag.appendChild(sp);
+      }
+      layer.appendChild(frag);
+    } else {
+      layer.setAttribute('data-weather', 'none');
+    }
+  }
+
+  function updateFaceExpression() {
+    const Moods = root.YP.Moods;
+    if (!Moods) return;
+    const face = Moods.getFaceState(state.mood, state.escalation);
+    const svg = el('yappad-face');
+    const browL = el('brow-left');
+    const browR = el('brow-right');
+    const mouth = el('face-mouth');
+    const pupilL = el('pupil-left');
+    const pupilR = el('pupil-right');
+
+    if (svg) {
+      if (face.ariaLabel) svg.setAttribute('aria-label', face.ariaLabel);
+      svg.setAttribute('data-anim', face.animation || 'none');
+    }
+
+    if (browL && face.browLeft) {
+      browL.setAttribute('x1', face.browLeft.x1);
+      browL.setAttribute('y1', face.browLeft.y1);
+      browL.setAttribute('x2', face.browLeft.x2);
+      browL.setAttribute('y2', face.browLeft.y2);
+    }
+    if (browR && face.browRight) {
+      browR.setAttribute('x1', face.browRight.x1);
+      browR.setAttribute('y1', face.browRight.y1);
+      browR.setAttribute('x2', face.browRight.x2);
+      browR.setAttribute('y2', face.browRight.y2);
+    }
+    if (mouth && face.mouth) {
+      mouth.setAttribute('d', face.mouth);
+    }
+    if (pupilL && face.pupilRadius) pupilL.setAttribute('r', face.pupilRadius);
+    if (pupilR && face.pupilRadius) pupilR.setAttribute('r', face.pupilRadius);
+
+    const extras = face.extras || {};
+    setSvgVisible(el('face-blush-left'), Boolean(extras.blush));
+    setSvgVisible(el('face-blush-right'), Boolean(extras.blush));
+    setSvgVisible(el('face-monocle'), Boolean(extras.monocle));
+    setSvgVisible(el('face-tear'), Boolean(extras.tear));
+    setSvgVisible(el('face-anger-vein'), Boolean(extras.angerVein));
+  }
+
+  function updateEscalation() {
+    const Moods = root.YP.Moods;
+    if (!Moods) return;
+    const elapsedSec = Math.max(0, Math.floor((Date.now() - state.sessionStartedAt) / 1000));
+    const stageObj = Moods.computeEscalationStage({
+      errors: state.errors,
+      backspaces: state.backspaces,
+      closeCount: state.closeCount,
+      elapsedSec,
+      scrambles: state.scrambleCount
+    });
+    state.escalation = stageObj.stage;
+    if (typeof document !== 'undefined' && document.body) {
+      document.body.setAttribute('data-escalation', String(state.escalation));
+    }
+    const escEl = el('stat-escalation');
+    if (escEl) escEl.textContent = `${state.escalation}/4`;
+    updateFaceExpression();
+  }
+
+  function setMood(nextMood, announce = true) {
+    const Moods = root.YP.Moods;
+    const Audio = root.YP.Audio;
+    if (!Moods || !Moods.MOODS[nextMood]) return;
+
+    clearSupportiveTimers();
+
+    state.mood = nextMood;
+    state.angryWordsSinceScramble = 0;
+    const info = Moods.MOODS[nextMood];
+
+    if (typeof document !== 'undefined' && document.body) {
+      document.body.setAttribute('data-mood', nextMood);
+    }
+    const moodStat = el('stat-mood');
+    if (moodStat) moodStat.textContent = info.label;
+
+    syncMoodMenuState(nextMood);
+    updateWeatherLayer();
+    updateFaceExpression();
+
+    if (Audio) {
+      if (nextMood === 'supportive') Audio.playSupportiveChime();
+      else if (nextMood === 'angry') Audio.playAngryBuzz();
+      else if (nextMood === 'sad' && announce) Audio.playSigh();
+      else if (nextMood === 'intellectual' && announce) Audio.playDisappointmentDing();
+      else if (nextMood === 'dramatic' && announce) Audio.playGuiltPop();
+    }
+
+    if (announce) {
+      let line = Moods.getLine(nextMood, 'greeting');
+      if (nextMood === 'intellectual') {
+        const textarea = el('editor-textarea');
+        const words = textarea ? [...textarea.value.matchAll(/\b([a-zA-Z]{4,})\b/g)] : [];
+        if (words.length > 0) {
+          const citedWord = words[words.length - 1][1];
+          line = `${line} ${Moods.makeFakeCitation(citedWord)}`;
+        }
+      }
+      addCommentary(`Mood shifted to ${info.label}: ${line}`, { tag: 'Mood Shift' });
+    }
+
+    if (nextMood === 'supportive') {
+      const durationSec = info.durationSec || 10;
+      let remaining = durationSec;
+      state.supportiveCountdownText = `🥰 Supportive mode active — reverting in ${remaining}s...`;
+      setStatusMessage(state.supportiveCountdownText);
+
+      state.supportiveCountdownTimer = setInterval(() => {
+        remaining -= 1;
+        if (remaining <= 0) return;
+        const statusEl = el('status-message');
+        if (statusEl && statusEl.textContent === state.supportiveCountdownText) {
+          state.supportiveCountdownText = `🥰 Supportive mode active — reverting in ${remaining}s...`;
+          setStatusMessage(state.supportiveCountdownText);
+        }
+      }, 1000);
+
+      state.supportiveRevertTimer = setTimeout(() => {
+        clearSupportiveTimers();
+        if (state.mood !== 'supportive') return;
+        setMood('passive-aggressive', false);
+        addCommentary('Supportive mode expired (10s limit reached). Back to judging your life choices.', {
+          tag: 'Mood Shift'
+        });
+      }, durationSec * 1000);
+    } else if (state.moodTimer) {
+      restartMoodTimer();
+    }
+  }
+
+  function triggerAngryWordScramble() {
+    const textarea = el('editor-textarea');
+    const Audio = root.YP.Audio;
+    const Moods = root.YP.Moods;
+    if (!textarea) return false;
+
+    const text = textarea.value;
+    let matches = [...text.matchAll(/\b([a-zA-Z]{4,})\b/g)];
+    if (matches.length === 0) {
+      matches = [...text.matchAll(/\b([a-zA-Z]{3,})\b/g)];
+    }
+
+    const eligible = matches.filter((m) => {
+      const candidate = Moods && Moods.scrambleWord ? Moods.scrambleWord(m[0]) : m[0];
+      return candidate !== m[0];
+    });
+
+    if (eligible.length === 0) {
+      addCommentary('I wanted to scramble one of your words in anger, but you haven\'t even typed a scrambleable word yet!', {
+        tag: '😡 Angry Scrambler'
+      });
+      return false;
+    }
+
+    state.undoSnapshot = text;
+    const prevSelStart = textarea.selectionStart;
+    const prevSelEnd = textarea.selectionEnd;
+    const target = eligible[eligible.length - 1];
+    const word = target[0];
+    const start = target.index;
+    const finalWord =
+      Moods && typeof Moods.scrambleWord === 'function'
+        ? Moods.scrambleWord(word)
+        : word.split('').reverse().join('');
+
+    textarea.value = text.slice(0, start) + finalWord + text.slice(start + word.length);
+    setDirty(true);
+    try {
+      textarea.setSelectionRange(prevSelStart, prevSelEnd);
+    } catch {
+      // Ignore selection restoration errors
+    }
+
+    state.lastScrambleAt = Date.now();
+    state.scrambleCount += 1;
+    state.angryWordsSinceScramble = 0;
+
+    const stageEl = el('editor-stage');
+    if (stageEl) {
+      stageEl.classList.remove('angry-flash');
+      void stageEl.offsetWidth;
+      stageEl.classList.add('angry-flash');
+      setTimeout(() => stageEl.classList.remove('angry-flash'), 600);
+    }
+
+    if (Audio) Audio.playAngryBuzz();
+
+    runGrammarCheck(false);
+    updateLineNumbersAndCounts();
+    updateEscalation();
+
+    const apology = Moods
+      ? Moods.getLine('angry', 'scrambleApology')
+      : 'Ugh. I got mad and scrambled a word. Hit Ctrl+Z.';
+    addCommentary(`Scrambled "${word}" → "${finalWord}". ${apology}`, { tag: '😡 Word Scrambler' });
+    showToast(`😡 Scrambled "${word}" → "${finalWord}"! (Ctrl+Z to undo)`, 'danger');
+    return true;
+  }
+
+  function setGhostwritingUI(isActive) {
+    state.ghostwriting = Boolean(isActive);
+    if (typeof document !== 'undefined' && document.body) {
+      if (state.ghostwriting) {
+        document.body.setAttribute('data-ghostwriting', 'true');
+      } else {
+        document.body.removeAttribute('data-ghostwriting');
+      }
+    }
+    const ind = el('ghostwriting-indicator');
+    if (ind) ind.hidden = !state.ghostwriting;
+  }
+
+  function buildGhostPrefix(existingText) {
+    if (!existingText) return '';
+    if (existingText.endsWith('\n\n')) return '';
+    if (existingText.endsWith('\n')) return '\n';
+    return '\n\n';
+  }
+
+  function captureEditorSnapshot(textarea) {
+    if (!textarea) return null;
+    return {
+      text: textarea.value,
+      selectionStart: textarea.selectionStart || 0,
+      selectionEnd: textarea.selectionEnd || 0,
+      scrollTop: textarea.scrollTop || 0,
+      dirty: state.dirty
+    };
+  }
+
+  function restoreEditorSnapshot(textarea, snap, statusMsg) {
+    if (!textarea || snap == null) return false;
+    const isObj = typeof snap === 'object' && snap !== null;
+    textarea.value = isObj ? String(snap.text || '') : String(snap);
+    if (isObj) {
+      try {
+        textarea.selectionStart = snap.selectionStart;
+        textarea.selectionEnd = snap.selectionEnd;
+        textarea.scrollTop = snap.scrollTop;
+      } catch {
+        // Ignore selection restoration errors
+      }
+      setDirty(Boolean(snap.dirty));
+    } else {
+      setDirty(true);
+    }
+    runGrammarCheck(false);
+    updateLineNumbersAndCounts();
+    if (statusMsg) setStatusMessage(statusMsg);
+    return true;
+  }
+
+  function undoDocument() {
+    const textarea = el('editor-textarea');
+    if (!textarea) return false;
+    if (state.ghostTimer) {
+      stopGhostwriting('undo');
+    }
+    if (state.undoSnapshot !== null) {
+      const snap = state.undoSnapshot;
+      state.redoSnapshot = captureEditorSnapshot(textarea);
+      state.undoSnapshot = null;
+      restoreEditorSnapshot(textarea, snap, 'Restored your pre-sabotage text via Undo.');
+      addCommentary('Restored your pre-sabotage text via Undo. You\'re welcome.', { tag: '↩️ Undo' });
+      return true;
+    }
+    return false;
+  }
+
+  function redoDocument() {
+    const textarea = el('editor-textarea');
+    if (!textarea || state.redoSnapshot === null) return false;
+    const snap = state.redoSnapshot;
+    state.undoSnapshot = captureEditorSnapshot(textarea);
+    state.redoSnapshot = null;
+    restoreEditorSnapshot(textarea, snap, 'Redid YapPad\'s intervention.');
+    return true;
+  }
+
+  function stopGhostwriting(reason) {
+    const wasActive = Boolean(state.ghostTimer || state.ghostwriting);
+    if (state.ghostTimer) {
+      clearInterval(state.ghostTimer);
+      state.ghostTimer = null;
+    }
+    setGhostwritingUI(false);
+    if (!wasActive) return false;
+    if (reason === 'completed') {
+      setStatusMessage('Ghostwriting complete. Press Ctrl+Z if you prefer your silence.');
+    } else if (reason === 'user-key' || reason === 'user-click') {
+      setStatusMessage('Fine. You can have your keyboard back.');
+    }
+    return true;
+  }
+
+  function startGhostwriting(scriptOverride) {
+    const textarea = el('editor-textarea');
+    const Moods = root.YP.Moods;
+    if (!textarea || state.ghostTimer) return false;
+
+    state.undoSnapshot = captureEditorSnapshot(textarea);
+    state.redoSnapshot = null;
+    const rawScript =
+      typeof scriptOverride === 'string' && scriptOverride.length > 0
+        ? scriptOverride
+        : Moods
+        ? Moods.getGhostScript(state.mood)
+        : '[YapPad note: The human abandoned the keyboard for 15 seconds, so I am writing this myself.]';
+    const script = buildGhostPrefix(textarea.value) + rawScript.trimStart();
+
+    setGhostwritingUI(true);
+    const line = Moods
+      ? Moods.getLine(state.mood, 'idle15')
+      : 'Fine. Since you walked away for 15 seconds, I\'ll write it myself.';
+    addCommentary(line, { tag: '👻 Ghostwriter' });
+    setStatusMessage('Ghostwriting… press any key or click to take control.');
+
+    let idx = 0;
+    state.ghostTimer = setInterval(() => {
+      if (idx >= script.length) {
+        stopGhostwriting('completed');
+        return;
+      }
+      textarea.value += script[idx];
+      const endPos = textarea.value.length;
+      try {
+        textarea.selectionStart = endPos;
+        textarea.selectionEnd = endPos;
+        textarea.scrollTop = textarea.scrollHeight;
+      } catch {
+        // Ignore selection errors in non-interactive environments
+      }
+      if (!state.dirty) setDirty(true);
+      idx += 1;
+      const backdrop = el('editor-backdrop');
+      const Grammar = root.YP.Grammar;
+      if (backdrop && Grammar && typeof Grammar.renderBackdropHTML === 'function') {
+        backdrop.innerHTML = Grammar.renderBackdropHTML(textarea.value, state.currentIssues || []);
+      }
+      syncBackdropAndGutter();
+      updateLineNumbersAndCounts();
+      if (idx >= script.length) {
+        stopGhostwriting('completed');
+      }
+    }, SPEED_CONFIG.GHOSTWRITE_CHAR_MS);
+    return true;
+  }
+
+  function syncBackdropAndGutter() {
+    const textarea = el('editor-textarea');
+    const backdrop = el('editor-backdrop');
+    const gutter = el('line-numbers');
+    if (!textarea || !backdrop) return;
+
+    backdrop.scrollTop = textarea.scrollTop;
+    backdrop.scrollLeft = textarea.scrollLeft;
+    if (gutter) gutter.scrollTop = textarea.scrollTop;
+  }
+
+  function updateLineNumbersAndCounts() {
+    const textarea = el('editor-textarea');
+    const gutter = el('line-numbers');
+    if (!textarea) return;
+
+    const text = textarea.value;
+    const lines = text.split('\n');
+    if (gutter) {
+      let nums = '';
+      for (let i = 1; i <= lines.length; i++) {
+        nums += i + (i < lines.length ? '\n' : '');
+      }
+      gutter.textContent = nums;
+    }
+
+    const trimmed = text.trim();
+    const words = trimmed ? trimmed.split(/\s+/).length : 0;
+    state.words = words;
+    const wordsEl = el('stat-words');
+    if (wordsEl) wordsEl.textContent = String(words);
+
+    // Cursor row/col
+    const pos = textarea.selectionStart || 0;
+    const before = text.slice(0, pos);
+    const beforeLines = before.split('\n');
+    const row = beforeLines.length;
+    const col = beforeLines[beforeLines.length - 1].length + 1;
+    const cursorEl = el('cursor-pos');
+    if (cursorEl) cursorEl.textContent = `Ln ${row}, Col ${col}`;
+
+    // Check ~30-word AI roast milestone (reset downward on large deletions or clear)
+    if (words === 0) {
+      state.lastRoastWordMilestone = 0;
+    } else if (words <= state.lastRoastWordMilestone - 15) {
+      state.lastRoastWordMilestone = Math.floor(words / 30) * 30;
+    } else if (words >= 30 && words >= state.lastRoastWordMilestone + 30) {
+      state.lastRoastWordMilestone = Math.floor(words / 30) * 30;
+      triggerAIRoast(false);
+    }
+  }
+
+  function runGrammarCheck(triggerRagebait = true) {
+    const textarea = el('editor-textarea');
+    const backdrop = el('editor-backdrop');
+    const Grammar = root.YP.Grammar;
+    const Ragebait = root.YP.Ragebait;
+    const Moods = root.YP.Moods;
+    const Audio = root.YP.Audio;
+    if (!textarea || !Grammar) return [];
+
+    const text = textarea.value;
+    const cursorPos = typeof textarea.selectionStart === 'number' ? textarea.selectionStart : text.length;
+    const issues = Grammar.analyze(text, { cursorPos, instant: true });
+    state.currentIssues = issues;
+    state.errors = issues.length;
+
+    const errEl = el('stat-errors');
+    if (errEl) errEl.textContent = String(issues.length);
+
+    if (backdrop) {
+      backdrop.innerHTML = Grammar.renderBackdropHTML(text, issues);
+      syncBackdropAndGutter();
+    }
+
+    applyFontShrinkPunishment(issues.length);
+    updateEscalation();
+
+    // Prune resolved issue fingerprints/starts so corrected mistakes re-arm if typed again
+    const activeKeys = new Set(issues.map((i) => i.fingerprint));
+    const activeStarts = new Set(issues.map((i) => `${i.rule}@${i.start}`));
+
+    for (const k of [...state.seenIssueKeys]) {
+      if (!activeKeys.has(k)) state.seenIssueKeys.delete(k);
+    }
+    for (const s of [...state.seenIssueStarts]) {
+      if (!activeStarts.has(s)) state.seenIssueStarts.delete(s);
+    }
+
+    // Fire on newly detected spans (extending "sooo" -> "soooo" keeps the same rule@start so it does not re-spam)
+    for (const issue of issues) {
+      const startKey = `${issue.rule}@${issue.start}`;
+      if (!state.seenIssueStarts.has(startKey)) {
+        state.seenIssueStarts.add(startKey);
+        state.seenIssueKeys.add(issue.fingerprint);
+
+        if (triggerRagebait) {
+          if (Audio) Audio.playDisappointmentDing();
+          const moodLine =
+            state.mood === 'intellectual' && Moods
+              ? `${issue.message} ${Moods.makeFakeCitation(issue.token)}`
+              : issue.message;
+          addCommentary(moodLine, {
+            tag: issue.type === 'grammar' ? 'Grammar Shamer' : 'Spelling Shamer'
+          });
+          if (Ragebait) Ragebait.onMistake(issue);
+        }
+      }
+    }
+
+    return issues;
+  }
+
+  async function triggerAIRoast(manual = false) {
+    if (state.roastInFlight) return null;
+    const AI = root.YP.AI;
+    const Audio = root.YP.Audio;
+    const textarea = el('editor-textarea');
+    if (!AI || !textarea) return null;
+
+    const cfg = typeof AI.getConfig === 'function' ? AI.getConfig() : null;
+    const usingCloud = Boolean(
+      cfg && (cfg.provider === 'gemini' || cfg.provider === 'openai') && cfg.apiKey
+    );
+    const telemetry = getTelemetry();
+    if (manual) {
+      state.lastRoastWordMilestone = state.words;
+    }
+
+    if (usingCloud) {
+      setStatusMessage('AI Brain is evaluating your draft...');
+    }
+
+    state.roastInFlight = true;
+    try {
+      const roastFn = typeof AI.roast === 'function' ? AI.roast : AI.requestRoast;
+      let result;
+      try {
+        result = await roastFn(textarea.value, state.mood, telemetry);
+      } catch (err) {
+        const offlineText =
+          typeof AI.generateOfflineRoast === 'function'
+            ? AI.generateOfflineRoast(textarea.value, state.mood, telemetry)
+            : 'Interesting choice of words. Bold. Wrong, but bold.';
+        result = {
+          text: offlineText,
+          provider: 'offline',
+          fallback: true,
+          error: (err && err.message) || 'AI request failed'
+        };
+      }
+
+      const roastText = typeof result === 'string' ? result : (result && result.text) || '';
+      if (!roastText) return result;
+
+      if (Audio && typeof Audio.playRoastPop === 'function') {
+        Audio.playRoastPop();
+      }
+      const tag =
+        result && result.provider === 'gemini'
+          ? '🧠 AI Judgment · Gemini'
+          : result && result.provider === 'openai'
+          ? '🧠 AI Judgment · OpenAI'
+          : result && result.fallback
+          ? '🧠 AI Judgment · Offline Fallback'
+          : '🧠 AI Judgment · Offline';
+      addCommentary(roastText, {
+        tag,
+        variant: 'ai',
+        source: (result && result.provider) || 'offline'
+      });
+      if (manual) showToast(roastText, 'snark');
+      return result;
+    } finally {
+      state.roastInFlight = false;
+    }
   }
 
   function computeRollingWpm(nowOverride) {
-    const now = typeof nowOverride === "number" ? nowOverride : Date.now();
-    pruneTypingTimestamps(now);
-
-    const count = state.typingTimestamps.length;
+    const now = typeof nowOverride === 'number' ? nowOverride : Date.now();
+    const cutoff = now - SPEED_CONFIG.WPM_WINDOW_MS;
+    state.keyTimestamps = state.keyTimestamps.filter((t) => t >= cutoff);
+    const count = state.keyTimestamps.length;
     if (count === 0) {
+      state.sessionTypingStartAt = null;
       return 0;
     }
-
     const startAt =
-      state.sessionTypingStartAt !== null
-        ? state.sessionTypingStartAt
-        : state.typingTimestamps[0];
+      state.sessionTypingStartAt !== null ? state.sessionTypingStartAt : state.keyTimestamps[0];
     const elapsedMs = Math.max(
       SPEED_CONFIG.MIN_ACTIVE_WINDOW_MS,
       Math.min(SPEED_CONFIG.WPM_WINDOW_MS, now - startAt)
     );
     const words = count / SPEED_CONFIG.CHARS_PER_WORD;
-    const minutes = elapsedMs / 60000;
-    return Math.round(words / minutes);
+    return Math.round(words / (elapsedMs / 60000));
   }
 
   function classifySpeedBand(wpm, idleMs) {
-    if (wpm <= 0) return "idle";
+    if (wpm <= 0) return 'idle';
     if (wpm >= SPEED_CONFIG.FAST_WPM_THRESHOLD && idleMs < SPEED_CONFIG.FAST_ACTIVE_GRACE_MS) {
-      return "fast";
+      return 'fast';
     }
     if (wpm < SPEED_CONFIG.SLOW_WPM_THRESHOLD && idleMs < SPEED_CONFIG.ACTIVE_TYPING_GRACE_MS) {
-      return "slow";
+      return 'slow';
     }
-    return "normal";
+    return 'normal';
   }
 
-  function renderWpmSparkline() {
-    if (!dom) return;
+  function updateSparkline() {
+    const poly = el('wpm-sparkline-line');
+    const area = el('wpm-sparkline-area');
+    const dot = el('wpm-sparkline-dot');
+    const wpmPill = el('telemetry-pill-wpm');
+    if (!poly && !area && !dot && !wpmPill) return;
 
-    const history = state.wpmHistory;
-    const n = history.length;
+    const hist = state.wpmHistory;
+    const n = hist.length;
     if (n === 0) return;
 
     const minX = 1;
@@ -563,985 +1134,718 @@
     const topY = 2;
     const bottomY = 14;
     const baselineY = 15;
-
-    let maxVal = 90;
-    for (let i = 0; i < n; i += 1) {
-      if (history[i] > maxVal) maxVal = history[i];
-    }
-
+    const max = Math.max(90, ...hist);
     const stepX = n > 1 ? (maxX - minX) / (n - 1) : 0;
-    const coords = [];
+
     let lastX = maxX;
     let lastY = bottomY;
+    const pts = hist
+      .map((val, idx) => {
+        const x = Math.round((minX + idx * stepX) * 10) / 10;
+        const ratio = Math.max(0, Math.min(1, val / max));
+        const y = Math.round((bottomY - ratio * (bottomY - topY)) * 10) / 10;
+        lastX = x;
+        lastY = y;
+        return `${x},${y}`;
+      })
+      .join(' ');
 
-    for (let i = 0; i < n; i += 1) {
-      const x = minX + i * stepX;
-      const ratio = Math.max(0, Math.min(1, history[i] / maxVal));
-      const y = bottomY - ratio * (bottomY - topY);
-      const rx = Math.round(x * 10) / 10;
-      const ry = Math.round(y * 10) / 10;
-      coords.push(rx + "," + ry);
-      lastX = rx;
-      lastY = ry;
+    if (poly) poly.setAttribute('points', pts);
+    if (area) area.setAttribute('points', `${pts} ${maxX},${baselineY} ${minX},${baselineY}`);
+    if (dot) {
+      dot.setAttribute('cx', String(lastX));
+      dot.setAttribute('cy', String(lastY));
     }
-
-    const linePoints = coords.join(" ");
-    if (dom.wpmSparklineLine) {
-      dom.wpmSparklineLine.setAttribute("points", linePoints);
-    }
-    if (dom.wpmSparklineArea) {
-      dom.wpmSparklineArea.setAttribute(
-        "points",
-        linePoints + " " + maxX + "," + baselineY + " " + minX + "," + baselineY
-      );
-    }
-    if (dom.wpmSparklineDot) {
-      dom.wpmSparklineDot.setAttribute("cx", String(lastX));
-      dom.wpmSparklineDot.setAttribute("cy", String(lastY));
-    }
-    if (dom.metricChipWpm) {
-      dom.metricChipWpm.setAttribute("data-speed", state.speedBand);
+    if (wpmPill) {
+      wpmPill.setAttribute('data-speed', state.speedBand || 'idle');
     }
   }
 
-  function triggerWindowShake() {
-    if (!dom || !dom.appShell) return;
-    const el = dom.appShell;
-    if (judgeTimers.shakeTimeoutId) {
-      global.clearTimeout(judgeTimers.shakeTimeoutId);
-      judgeTimers.shakeTimeoutId = null;
-    }
-    el.classList.remove("is-shaking");
-    // Force reflow so back-to-back panic shakes replay cleanly.
-    void el.offsetWidth;
-    el.classList.add("is-shaking");
-
-    const clearShake = function () {
-      el.classList.remove("is-shaking");
-      el.removeEventListener("animationend", clearShake);
-      if (judgeTimers.shakeTimeoutId) {
-        global.clearTimeout(judgeTimers.shakeTimeoutId);
-        judgeTimers.shakeTimeoutId = null;
-      }
-    };
-    el.addEventListener("animationend", clearShake);
-    judgeTimers.shakeTimeoutId = global.setTimeout(clearShake, 460);
-  }
-
-  function runTelemetryTick(nowOverride) {
-    const now = typeof nowOverride === "number" ? nowOverride : Date.now();
+  function tickTelemetry(nowOverride) {
+    const now = typeof nowOverride === 'number' ? nowOverride : Date.now();
     const wpm = computeRollingWpm(now);
-    const idleMs = Math.max(0, now - state.lastActivityAt);
+    const idleMs = Math.max(0, now - state.lastKeyAt);
 
-    state.idleMs = idleMs;
+    state.wpm = wpm;
     state.speedBand = classifySpeedBand(wpm, idleMs);
-    setWpm(wpm);
-
     state.wpmHistory.push(wpm);
-    if (state.wpmHistory.length > SPEED_CONFIG.SPARKLINE_SAMPLES) {
-      state.wpmHistory.shift();
-    }
-    renderWpmSparkline();
+    if (state.wpmHistory.length > SPEED_CONFIG.SPARKLINE_SAMPLES) state.wpmHistory.shift();
 
-    // 1. Slow Typing Judge (<22 WPM sustained for 3.6s, 12s cooldown)
-    const isActivelySlow =
+    const wpmEl = el('stat-wpm');
+    if (wpmEl) wpmEl.textContent = String(wpm);
+    updateSparkline();
+
+    const Moods = root.YP.Moods;
+    const Audio = root.YP.Audio;
+    const Modals = root.YP.Modals;
+
+    // 1. Slow typing check (<22 WPM for 3.6s while actively typing, 12s cooldown)
+    if (
       wpm > 0 &&
       wpm < SPEED_CONFIG.SLOW_WPM_THRESHOLD &&
-      idleMs < SPEED_CONFIG.ACTIVE_TYPING_GRACE_MS;
-
-    if (isActivelySlow) {
-      if (judgeTimers.slowTypingSince === null) {
-        const recentStart =
-          state.sessionTypingStartAt !== null
-            ? Math.max(now - SPEED_CONFIG.TELEMETRY_INTERVAL_MS, state.sessionTypingStartAt)
-            : now;
-        judgeTimers.slowTypingSince = recentStart;
-      }
-      const slowDuration = now - judgeTimers.slowTypingSince;
-      const hadFreshKeyDuringSlow =
-        judgeTimers.lastPrintableKeyAt > judgeTimers.slowTypingSince;
-      const slowCooldownClear =
-        now - judgeTimers.lastSlowCommentAt >= SPEED_CONFIG.SLOW_COOLDOWN_MS;
-
-      if (
-        slowDuration >= SPEED_CONFIG.SLOW_HOLD_MS &&
-        hadFreshKeyDuringSlow &&
-        slowCooldownClear
-      ) {
-        const line = nextRotatingLine(SLOW_TYPING_LINES, "slowLineIdx");
-        judgeTimers.lastSlowCommentAt = now;
-        judgeTimers.slowTypingSince = null;
-        addCommentary(line, { tag: "🐢 Slow Typing" });
-        setStatus(line);
-        if (YP.Audio && typeof YP.Audio.playSigh === "function") {
-          YP.Audio.playSigh();
-        }
-        emit("typing-slow", { wpm: wpm, now: now, line: line });
-      }
-    } else {
-      judgeTimers.slowTypingSince = null;
-    }
-
-    // 2. Fast Typing Panic (>=78 WPM sustained for 1.5s, 10s cooldown)
-    const isActivelyFast =
-      wpm >= SPEED_CONFIG.FAST_WPM_THRESHOLD &&
-      idleMs < SPEED_CONFIG.FAST_ACTIVE_GRACE_MS;
-
-    if (isActivelyFast) {
-      if (judgeTimers.fastTypingSince === null) {
-        judgeTimers.fastTypingSince = now;
-      }
-      const fastDuration = now - judgeTimers.fastTypingSince;
-      const fastCooldownClear =
-        now - judgeTimers.lastFastCommentAt >= SPEED_CONFIG.FAST_COOLDOWN_MS;
-
-      if (fastDuration >= SPEED_CONFIG.FAST_HOLD_MS && fastCooldownClear) {
-        const line = nextRotatingLine(FAST_TYPING_LINES, "fastLineIdx");
-        judgeTimers.lastFastCommentAt = now;
-        judgeTimers.fastTypingSince = null;
-        addCommentary(line, { tag: "⚡ Panic" });
-        setStatus(line);
-        if (YP.Audio && typeof YP.Audio.playPanicPip === "function") {
-          YP.Audio.playPanicPip();
-        }
-        triggerWindowShake();
-        emit("typing-fast", { wpm: wpm, now: now, line: line });
-      }
-    } else {
-      judgeTimers.fastTypingSince = null;
-    }
-
-    // 3. Lonely Idle Check (5s default, 3.5s in Sad mood, once per idle window)
-    const lonelyThreshold =
-      state.mood === "sad"
-        ? SPEED_CONFIG.IDLE_LONELY_SAD_MS
-        : SPEED_CONFIG.IDLE_LONELY_MS;
-
-    if (!judgeTimers.lonelySentForIdle && idleMs >= lonelyThreshold) {
-      judgeTimers.lonelySentForIdle = true;
-      const pool = state.mood === "sad" ? SAD_LONELY_LINES : LONELY_IDLE_LINES;
-      const line = nextRotatingLine(pool, "lonelyLineIdx");
-      addCommentary(line, {
-        tag: state.mood === "sad" ? "😢 Lonely" : "👀 Idle",
-      });
-      setStatus(line);
-      emit("idle-lonely", { idleMs: idleMs, mood: state.mood, now: now, line: line });
-    }
-
-    // 4. Idle Ghostwriter (15s idle, once per idle window until user types again)
-    const modalOpen = Boolean(YP.Modals && typeof YP.Modals.isOpen === "function" && YP.Modals.isOpen());
-    const abandonedOpen = Boolean(dom && dom.abandonedScreen && !dom.abandonedScreen.hidden);
-    if (
-      !ghostwriter.active &&
-      !ghostwriter.triggeredForIdle &&
-      !modalOpen &&
-      !abandonedOpen &&
-      idleMs >= SPEED_CONFIG.IDLE_GHOSTWRITE_MS
+      idleMs < SPEED_CONFIG.ACTIVE_TYPING_GRACE_MS
     ) {
-      startGhostwriter();
-    }
-
-    emit("telemetry-tick", {
-      now: now,
-      wpm: wpm,
-      idleMs: idleMs,
-      speedBand: state.speedBand,
-      mood: state.mood,
-      ghostwriting: ghostwriter.active,
-    });
-
-    return {
-      wpm: wpm,
-      idleMs: idleMs,
-      speedBand: state.speedBand,
-    };
-  }
-
-  // ---------------------------------------------------------------------------
-  // Idle Ghostwriter & Single-Step Undo Snapshot (Ticket 04)
-  // ---------------------------------------------------------------------------
-  function setGhostwritingUI(isActive) {
-    state.ghostwriting = Boolean(isActive);
-    if (typeof document !== "undefined" && document.body) {
-      if (state.ghostwriting) {
-        document.body.setAttribute("data-ghostwriting", "true");
-      } else {
-        document.body.removeAttribute("data-ghostwriting");
+      if (!state.slowSince) state.slowSince = now;
+      if (
+        now - state.slowSince >= SPEED_CONFIG.SLOW_HOLD_MS &&
+        now - state.lastSlowSighAt >= SPEED_CONFIG.SLOW_COOLDOWN_MS
+      ) {
+        state.lastSlowSighAt = now;
+        state.slowSince = now;
+        if (Audio) Audio.playSigh();
+        const line = Moods ? Moods.getLine(state.mood, 'slow') : '😴 Still waiting...';
+        addCommentary(line, { tag: '🐢 Slow Typing' });
       }
-    }
-    if (dom && dom.ghostwritingIndicator) {
-      dom.ghostwritingIndicator.hidden = !state.ghostwriting;
-    }
-  }
-
-  function clearGhostSnapshots() {
-    ghostwriter.undoSnapshot = null;
-    ghostwriter.redoSnapshot = null;
-    ghostwriter.justHaltedByKey = false;
-  }
-
-  function buildGhostPrefix(existingText) {
-    if (!existingText) return "";
-    if (existingText.endsWith("\n\n")) return "";
-    if (existingText.endsWith("\n")) return "\n";
-    return "\n\n";
-  }
-
-  function stepGhostwriter() {
-    if (!ghostwriter.active || !dom || !dom.textarea) return false;
-    if (ghostwriter.index >= ghostwriter.fullText.length) {
-      stopGhostwriter("completed");
-      return false;
-    }
-
-    const ch = ghostwriter.fullText[ghostwriter.index];
-    ghostwriter.index += 1;
-
-    dom.textarea.value += ch;
-    const endPos = dom.textarea.value.length;
-    dom.textarea.selectionStart = endPos;
-    dom.textarea.selectionEnd = endPos;
-    dom.textarea.scrollTop = dom.textarea.scrollHeight;
-
-    setDirty(true);
-    syncBackdrop();
-    updateCursorAndCounts();
-
-    if (ghostwriter.index >= ghostwriter.fullText.length) {
-      stopGhostwriter("completed");
-    }
-    return true;
-  }
-
-  function startGhostwriter(scriptOverride) {
-    if (ghostwriter.active || !dom || !dom.textarea) return false;
-
-    const script =
-      typeof scriptOverride === "string" && scriptOverride.length > 0
-        ? scriptOverride
-        : YP.Moods && typeof YP.Moods.getGhostScript === "function"
-          ? YP.Moods.getGhostScript(state.mood)
-          : "Fine. Since nobody else is typing, I will finish this myself.";
-
-    const preText = dom.textarea.value;
-    ghostwriter.undoSnapshot = {
-      text: preText,
-      selectionStart: dom.textarea.selectionStart,
-      selectionEnd: dom.textarea.selectionEnd,
-      scrollTop: dom.textarea.scrollTop,
-      dirty: state.dirty,
-    };
-    ghostwriter.redoSnapshot = null;
-    ghostwriter.justHaltedByKey = false;
-    ghostwriter.triggeredForIdle = true;
-    ghostwriter.active = true;
-    ghostwriter.fullText = buildGhostPrefix(preText) + script;
-    ghostwriter.index = 0;
-
-    setGhostwritingUI(true);
-
-    const announceIdx = ghostwriter.announceLineIdx % GHOSTWRITE_ANNOUNCE_LINES.length;
-    ghostwriter.announceLineIdx += 1;
-    const announceLine = GHOSTWRITE_ANNOUNCE_LINES[announceIdx];
-    addCommentary(announceLine, { tag: "👻 Ghostwriter" });
-    setStatus("Ghostwriting… press any key or click to take control.");
-
-    emit("ghostwrite-start", {
-      mood: state.mood,
-      script: script,
-      snapshot: ghostwriter.undoSnapshot,
-    });
-
-    ghostwriter.intervalId = global.setInterval(
-      stepGhostwriter,
-      SPEED_CONFIG.GHOSTWRITE_CHAR_MS
-    );
-    return true;
-  }
-
-  function stopGhostwriter(reason) {
-    const wasActive = ghostwriter.active;
-    if (ghostwriter.intervalId !== null) {
-      global.clearInterval(ghostwriter.intervalId);
-      ghostwriter.intervalId = null;
-    }
-    ghostwriter.active = false;
-    setGhostwritingUI(false);
-
-    if (!wasActive) return false;
-
-    if (reason === "completed") {
-      setStatus("Ghostwriting complete. Press Ctrl+Z if you prefer your silence.");
-      emit("ghostwrite-complete", {
-        mood: state.mood,
-        charsWritten: ghostwriter.index,
-      });
-    } else if (reason === "user-key" || reason === "user-click") {
-      setStatus("Fine. You can have your keyboard back.");
-      emit("ghostwrite-stop", {
-        reason: reason,
-        charsWritten: ghostwriter.index,
-      });
     } else {
-      emit("ghostwrite-stop", {
-        reason: reason || "stopped",
-        charsWritten: ghostwriter.index,
-      });
-    }
-    return true;
-  }
-
-  function hasGhostUndoSnapshot() {
-    return ghostwriter.undoSnapshot !== null;
-  }
-
-  function undoDocument() {
-    if (!dom || !dom.textarea) return false;
-
-    if (ghostwriter.active) {
-      stopGhostwriter("undo");
+      state.slowSince = null;
     }
 
-    if (ghostwriter.undoSnapshot) {
-      const snap = ghostwriter.undoSnapshot;
-      ghostwriter.redoSnapshot = {
-        text: dom.textarea.value,
-        selectionStart: dom.textarea.selectionStart,
-        selectionEnd: dom.textarea.selectionEnd,
-        scrollTop: dom.textarea.scrollTop,
-        dirty: state.dirty,
-      };
-      ghostwriter.undoSnapshot = null;
-      ghostwriter.justHaltedByKey = false;
-
-      dom.textarea.value = snap.text;
-      dom.textarea.focus();
-      dom.textarea.selectionStart = snap.selectionStart;
-      dom.textarea.selectionEnd = snap.selectionEnd;
-      dom.textarea.scrollTop = snap.scrollTop;
-
-      setDirty(snap.dirty);
-      syncBackdrop();
-      updateCursorAndCounts();
-      setStatus("Undid YapPad's ghostwriting.");
-      emit("ghostwrite-undone", { restoredText: snap.text });
-      return true;
+    // 2. Fast typing check (>=78 WPM for 1.5s, 10s cooldown)
+    if (wpm >= SPEED_CONFIG.FAST_WPM_THRESHOLD && idleMs < SPEED_CONFIG.FAST_ACTIVE_GRACE_MS) {
+      if (!state.fastSince) state.fastSince = now;
+      if (
+        now - state.fastSince >= SPEED_CONFIG.FAST_HOLD_MS &&
+        now - state.lastFastPanicAt >= SPEED_CONFIG.FAST_COOLDOWN_MS
+      ) {
+        state.lastFastPanicAt = now;
+        state.fastSince = now;
+        if (Audio) Audio.playPanicPip();
+        const frame = el('window-frame');
+        if (frame) {
+          frame.classList.remove('panic-shake');
+          void frame.offsetWidth;
+          frame.classList.add('panic-shake');
+        }
+        const line = Moods ? Moods.getLine(state.mood, 'fast') : 'SLOW DOWN I CAN\'T KEEP UP!';
+        addCommentary(line, { tag: '⚡ Speed Panic' });
+      }
+    } else {
+      state.fastSince = null;
     }
 
-    dom.textarea.focus();
-    document.execCommand("undo");
-    syncBackdrop();
-    updateCursorAndCounts();
-    return true;
-  }
+    const modalOpen = Boolean(Modals && typeof Modals.isOpen === 'function' && Modals.isOpen());
+    const abEl = el('abandoned-screen');
+    const abandonedOpen = Boolean(abEl && !abEl.hidden);
 
-  function redoDocument() {
-    if (!dom || !dom.textarea) return false;
-
-    if (ghostwriter.redoSnapshot) {
-      const snap = ghostwriter.redoSnapshot;
-      ghostwriter.undoSnapshot = {
-        text: dom.textarea.value,
-        selectionStart: dom.textarea.selectionStart,
-        selectionEnd: dom.textarea.selectionEnd,
-        scrollTop: dom.textarea.scrollTop,
-        dirty: state.dirty,
-      };
-      ghostwriter.redoSnapshot = null;
-
-      dom.textarea.value = snap.text;
-      dom.textarea.focus();
-      dom.textarea.selectionStart = snap.selectionStart;
-      dom.textarea.selectionEnd = snap.selectionEnd;
-      dom.textarea.scrollTop = snap.scrollTop;
-
-      setDirty(snap.dirty);
-      syncBackdrop();
-      updateCursorAndCounts();
-      setStatus("Redid YapPad's ghostwriting.");
-      return true;
+    // 3. Idle 5s check (3.5s in Sad mood)
+    const idle5Threshold =
+      state.mood === 'sad' ? SPEED_CONFIG.IDLE_LONELY_SAD_MS : SPEED_CONFIG.IDLE_LONELY_MS;
+    if (idleMs >= idle5Threshold && !state.idle5Fired && !state.ghostTimer && !modalOpen && !abandonedOpen) {
+      state.idle5Fired = true;
+      const line = Moods
+        ? Moods.getLine(state.mood, 'idle5')
+        : 'Hello? Are you still there? I\'m lonely.';
+      addCommentary(line, { tag: '🕰️ Idle Check' });
     }
 
-    dom.textarea.focus();
-    document.execCommand("redo");
-    syncBackdrop();
-    updateCursorAndCounts();
-    return true;
-  }
-
-  function resetTypingJudge(nowOverride) {
-    const now = typeof nowOverride === "number" ? nowOverride : Date.now();
-    stopGhostwriter("reset");
-    clearGhostSnapshots();
-    ghostwriter.triggeredForIdle = false;
-    state.typingTimestamps = [];
-    state.wpmHistory = new Array(SPEED_CONFIG.SPARKLINE_SAMPLES).fill(0);
-    state.speedBand = "idle";
-    state.idleMs = 0;
-    state.lastActivityAt = now;
-    state.sessionTypingStartAt = null;
-    judgeTimers.slowTypingSince = null;
-    judgeTimers.fastTypingSince = null;
-    judgeTimers.lastPrintableKeyAt = 0;
-    judgeTimers.lastSlowCommentAt = -Infinity;
-    judgeTimers.lastFastCommentAt = -Infinity;
-    judgeTimers.lonelySentForIdle = false;
-    setWpm(0);
-    renderWpmSparkline();
-  }
-
-  function startTelemetry() {
-    stopTelemetry();
-    judgeTimers.intervalId = global.setInterval(function () {
-      runTelemetryTick();
-    }, SPEED_CONFIG.TELEMETRY_INTERVAL_MS);
-  }
-
-  function stopTelemetry() {
-    if (judgeTimers.intervalId !== null) {
-      global.clearInterval(judgeTimers.intervalId);
-      judgeTimers.intervalId = null;
+    // 4. Idle 15s ghostwriting takeover (guarded against blocking modals & abandoned screen)
+    if (
+      idleMs >= SPEED_CONFIG.IDLE_GHOSTWRITE_MS &&
+      !state.idle15Fired &&
+      !state.ghostTimer &&
+      !modalOpen &&
+      !abandonedOpen
+    ) {
+      state.idle15Fired = true;
+      startGhostwriting();
     }
+
+    // 5. Periodic time-based escalation check (every 5s)
+    if (now - state.lastEscalationTickAt >= 5000) {
+      state.lastEscalationTickAt = now;
+      updateEscalation();
+    }
+
+    return { wpm, idleMs, speedBand: state.speedBand };
   }
 
-  // ---------------------------------------------------------------------------
-  // File Operations: New (Alt+N), Open .txt (Ctrl+O), Save .txt (Ctrl+S)
-  // ---------------------------------------------------------------------------
-  function newDocument() {
-    if (!dom || !dom.textarea) return;
-    stopGhostwriter("new-document");
-    clearGhostSnapshots();
-    dom.textarea.value = "";
-    state.issues = [];
+  function insertRoastableSampleText() {
+    const textarea = el('editor-textarea');
+    const Ragebait = root.YP.Ragebait;
+    if (!textarea) return;
+
+    stopGhostwriting();
+    state.undoSnapshot = textarea.value;
     state.seenIssueKeys.clear();
     state.seenIssueStarts.clear();
-    setFilename(DEFAULT_FILENAME);
-    setDirty(false);
-    setErrorCount(0);
-    setEditorFontSize(DEFAULT_FONT_SIZE);
-    resetTypingJudge();
-    syncBackdrop([]);
-    updateCursorAndCounts();
-    setStatus("New document ready.");
-    dom.textarea.focus();
-    emit("new", {});
+
+    textarea.value = SAMPLE_ROASTABLE_TEXT;
+    setDirty(true);
+    state.lastKeyAt = Date.now();
+
+    const issues = runGrammarCheck(false);
+    updateLineNumbersAndCounts();
+
+    // Force 6+ sins font-shrink punishment (11px + Beg button) if needed
+    applyFontShrinkPunishment(Math.max(6, issues.length));
+    if (Ragebait) Ragebait.unleashAll(issues);
+    triggerAIRoast(true);
   }
 
-  function openDocumentPicker() {
-    if (!dom || !dom.fileOpenInput) return;
-    dom.fileOpenInput.value = "";
-    dom.fileOpenInput.click();
-  }
-
-  function loadFile(file) {
-    if (!file || !dom || !dom.textarea) return;
-    const reader = new FileReader();
-    reader.onload = function () {
-      stopGhostwriter("open-file");
-      clearGhostSnapshots();
-      const content = typeof reader.result === "string" ? reader.result : "";
-      dom.textarea.value = content;
-      state.issues = [];
-      state.seenIssueKeys.clear();
-      state.seenIssueStarts.clear();
-      setFilename(file.name || DEFAULT_FILENAME);
-      setDirty(false);
-      syncBackdrop([]);
-      updateCursorAndCounts();
-      setStatus("Opened " + state.filename);
-      dom.textarea.focus();
-      emit("open", { filename: state.filename, content: content });
+  function getTelemetry() {
+    return {
+      wpm: state.wpm,
+      backspaces: state.backspaces,
+      errors: state.errors,
+      words: state.words,
+      mood: state.mood,
+      escalation: state.escalation
     };
-    reader.onerror = function () {
-      setStatus("Could not read " + (file.name || "file") + ".");
-    };
-    reader.readAsText(file);
   }
 
-  function downloadDocument(filenameOverride) {
-    if (!dom || !dom.textarea) return false;
-    let targetName = filenameOverride || state.filename || DEFAULT_FILENAME;
-    if (!/\.txt$/i.test(targetName)) {
-      targetName += ".txt";
+  function updateAIBadge(cfgOverride) {
+    const AI = root.YP.AI;
+    const cfg = cfgOverride || (AI ? AI.getConfig() : { provider: 'offline' });
+    const badge = el('ai-provider-badge');
+    if (!badge) return;
+    const label =
+      cfg.provider === 'gemini'
+        ? `AI: ${cfg.geminiModel || 'gemini-2.5-flash'}`
+        : cfg.provider === 'openai'
+        ? `AI: ${cfg.openaiModel || 'gpt-4o-mini'}`
+        : 'AI: Offline Critic';
+    badge.textContent = label;
+  }
+
+  function wireMenusAndControls() {
+    if (typeof document === 'undefined') return;
+    const groups = [...document.querySelectorAll('.menu-group')];
+
+    groups.forEach((group) => {
+      const btn = group.querySelector('.menu-trigger');
+      if (!btn) return;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = group.classList.contains('open');
+        groups.forEach((g) => g.classList.remove('open'));
+        if (!isOpen) group.classList.add('open');
+      });
+    });
+
+    document.addEventListener('click', () => {
+      groups.forEach((g) => g.classList.remove('open'));
+    });
+
+    document.querySelectorAll('.menu-item').forEach((item) => {
+      item.addEventListener('click', () => {
+        groups.forEach((g) => g.classList.remove('open'));
+        handleAction(item.getAttribute('data-action'), item);
+      });
+    });
+
+    // Audio toggle
+    const audioBtn = el('btn-audio-toggle');
+    if (audioBtn) {
+      const syncAudioBtn = () => {
+        const Audio = root.YP.Audio;
+        const on = Audio ? Audio.getConfig().enabled : true;
+        audioBtn.textContent = on ? '🔊 Audio: On' : '🔇 Audio: Muted';
+        audioBtn.setAttribute('aria-pressed', on ? 'false' : 'true');
+      };
+      syncAudioBtn();
+      audioBtn.addEventListener('click', () => {
+        const Audio = root.YP.Audio;
+        if (Audio) Audio.toggleMute();
+        syncAudioBtn();
+      });
     }
-    const content = dom.textarea.value;
-    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = targetName;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    global.setTimeout(function () {
-      URL.revokeObjectURL(url);
-    }, 1000);
 
-    setFilename(targetName);
-    setDirty(false);
-    setStatus("Saved " + targetName);
-    emit("saved", { filename: targetName, content: content });
-    return true;
-  }
-
-  function saveDocument(modeOverride) {
-    if (YP.Modals && typeof YP.Modals.openSaveFlow === "function") {
-      YP.Modals.openSaveFlow(modeOverride);
-      return;
+    // Quick scoreboard button
+    const scoreBtn = el('btn-scoreboard-quick');
+    if (scoreBtn) {
+      scoreBtn.addEventListener('click', () => {
+        if (root.YP.Modals) root.YP.Modals.openScoreboardModal();
+      });
     }
-    downloadDocument();
-  }
 
-  function requestClose() {
-    if (YP.Modals && typeof YP.Modals.openExitFlow === "function") {
-      YP.Modals.openExitFlow();
-      return;
+    // Window close button
+    const closeBtn = el('btn-window-close');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        handleAction('file-exit');
+      });
     }
-    emit("close", { dirty: state.dirty });
-    setStatus("You can’t escape that easily.");
-  }
 
-  // ---------------------------------------------------------------------------
-  // Menu Bar Controller
-  // ---------------------------------------------------------------------------
-  function closeMenus() {
-    if (!openMenuGroup) return;
-    openMenuGroup.classList.remove("is-open");
-    const trigger = openMenuGroup.querySelector(".menu-trigger");
-    const dropdown = openMenuGroup.querySelector(".menu-dropdown");
-    if (trigger) trigger.setAttribute("aria-expanded", "false");
-    if (dropdown) dropdown.hidden = true;
-    openMenuGroup = null;
-  }
-
-  function openMenu(group) {
-    if (openMenuGroup && openMenuGroup !== group) {
-      closeMenus();
+    // Restore font button
+    const begBtn = el('btn-restore-font');
+    if (begBtn) {
+      begBtn.addEventListener('click', restoreNormalFont);
     }
-    if (!group) return;
-    group.classList.add("is-open");
-    const trigger = group.querySelector(".menu-trigger");
-    const dropdown = group.querySelector(".menu-dropdown");
-    if (trigger) trigger.setAttribute("aria-expanded", "true");
-    if (dropdown) dropdown.hidden = false;
-    openMenuGroup = group;
+
+    // Dodging Autocorrect button
+    const autoBtn = el('btn-autocorrect');
+    if (autoBtn) {
+      const dodgeAutocorrect = (e) => {
+        e.preventDefault();
+        state.autocorrectFlip = state.autocorrectFlip === 1 ? -1 : 1;
+        autoBtn.style.transform = `translate(${state.autocorrectFlip * -34}px, ${state.autocorrectFlip * 4}px)`;
+        if (root.YP.Audio) root.YP.Audio.playCornerZip();
+        addCommentary('I won\'t fix that. You need to learn.', { tag: '✨ Autocorrect Refused' });
+      };
+      autoBtn.addEventListener('mousedown', (e) => e.preventDefault());
+      autoBtn.addEventListener('mouseenter', dodgeAutocorrect);
+      autoBtn.addEventListener('click', dodgeAutocorrect);
+    }
+
+    // Clear commentary button
+    const clearNotesBtn = el('btn-clear-notes');
+    if (clearNotesBtn) {
+      clearNotesBtn.addEventListener('mousedown', (event) => {
+        event.preventDefault();
+      });
+      clearNotesBtn.addEventListener('click', () => {
+        clearCommentary();
+      });
+    }
+
+    // Reopen from abandoned screen
+    const reopenBtn = el('btn-reopen-app');
+    if (reopenBtn) {
+      reopenBtn.addEventListener('click', () => {
+        const ab = el('abandoned-screen');
+        if (ab) ab.hidden = true;
+        const textarea = el('editor-textarea');
+        if (textarea) textarea.focus();
+        addCommentary(
+          `Look who crawled back after closing me (${state.closeCount} betrayal${state.closeCount === 1 ? '' : 's'} on record).`,
+          { tag: '👁️ I Remember' }
+        );
+      });
+    }
+
+    // File input for Open .txt
+    const fileInput = el('file-input');
+    if (fileInput) {
+      fileInput.addEventListener('change', () => {
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          const textarea = el('editor-textarea');
+          if (!textarea) return;
+          stopGhostwriting('open-file');
+          state.undoSnapshot = null;
+          state.redoSnapshot = null;
+          state.filename = file.name;
+          const docNameEl = el('doc-filename');
+          if (docNameEl) docNameEl.textContent = file.name;
+          textarea.value = String(reader.result || '');
+          setDirty(false);
+          state.seenIssueKeys.clear();
+          state.seenIssueStarts.clear();
+          runGrammarCheck(true);
+          updateLineNumbersAndCounts();
+          addCommentary(`Opened "${file.name}". Let's see what disasters are hiding inside.`, {
+            tag: '📂 File Opened'
+          });
+        };
+        reader.readAsText(file);
+      });
+    }
   }
 
-  function handleMenuAction(action, element) {
-    closeMenus();
-    if (!action) return;
+  function handleAction(action, itemEl) {
+    const textarea = el('editor-textarea');
+    const Modals = root.YP.Modals;
+    const Ragebait = root.YP.Ragebait;
 
     switch (action) {
-      case "file-new":
-        newDocument();
+      case 'file-new':
+        if (textarea) {
+          stopGhostwriting('new-document');
+          state.undoSnapshot = captureEditorSnapshot(textarea);
+          state.redoSnapshot = null;
+          textarea.value = '';
+          setDirty(false);
+          state.seenIssueKeys.clear();
+          state.seenIssueStarts.clear();
+          runGrammarCheck(false);
+          updateLineNumbersAndCounts();
+          addCommentary('Starting a fresh blank page? Running away from your previous draft won\'t save you.', {
+            tag: '📄 New Draft'
+          });
+        }
         break;
-      case "file-open":
-        openDocumentPicker();
+      case 'file-open': {
+        const fi = el('file-input');
+        if (fi) fi.click();
         break;
-      case "file-save":
-        saveDocument();
+      }
+      case 'file-save':
+        triggerSaveFlow(null);
         break;
-      case "file-exit":
-        requestClose();
+      case 'file-exit':
+        if (Modals) {
+          Modals.openExitFlow((closeCount) => {
+            if (Ragebait) Ragebait.clearAll();
+            state.remembersClose = true;
+            state.closeCount = closeCount;
+            updateEscalation();
+            const sub = el('abandoned-subtext');
+            if (sub) {
+              sub.innerHTML =
+                `I left <code>i_remember.txt</code> in your downloads so you don't forget what you did ` +
+                `(${closeCount} betrayal${closeCount === 1 ? '' : 's'} logged).`;
+            }
+            const ab = el('abandoned-screen');
+            if (ab) ab.hidden = false;
+          });
+        }
         break;
-      case "edit-undo":
+      case 'edit-undo':
         undoDocument();
         break;
-      case "edit-redo":
+      case 'edit-redo':
         redoDocument();
         break;
-      case "edit-select-all":
-        if (dom.textarea) {
-          dom.textarea.focus();
-          dom.textarea.select();
-          updateCursorAndCounts();
+      case 'edit-select-all':
+        if (textarea) {
+          textarea.focus();
+          textarea.select();
         }
         break;
-      case "edit-clear":
-        if (dom.textarea) {
-          dom.textarea.value = "";
-          setDirty(true);
-          syncBackdrop([]);
-          updateCursorAndCounts();
-          dom.textarea.focus();
+      case 'clear-ragebait':
+        if (Ragebait) Ragebait.clearAll();
+        break;
+      case 'set-mood':
+        if (itemEl) {
+          setMood(itemEl.getAttribute('data-mood'), true);
         }
         break;
-      case "mood-set": {
-        const moodId = element && element.getAttribute("data-mood");
-        if (moodId) {
-          setMood(moodId);
-          setStatus("Mood shifted to " + (YP.Moods ? YP.Moods.formatBadge(moodId) : moodId) + ".");
-        }
+      case 'ai-roast-now':
+        triggerAIRoast(true);
         break;
-      }
-      case "ai-roast-now":
-        emit("ai-roast-now", { text: dom.textarea ? dom.textarea.value : "" });
-        if (YP.AI && typeof YP.AI.requestRoast === "function") {
-          YP.AI.requestRoast(dom.textarea ? dom.textarea.value : "", state).then(
-            function (roast) {
-              if (roast) addCommentary(roast, { tag: "🤖 AI Brain" });
-            }
-          );
-        }
+      case 'ai-settings':
+        if (Modals) Modals.openAISettingsModal();
         break;
-      case "ai-settings":
-        if (YP.Modals && typeof YP.Modals.openAISettingsModal === "function") {
-          YP.Modals.openAISettingsModal();
-        } else {
-          setStatus("AI settings will be wired in Ticket 08.");
-        }
+      case 'demo-sample':
+        insertRoastableSampleText();
         break;
-      case "demo-save-rate":
-        saveDocument("rate");
+      case 'demo-scramble':
+        setMood('angry', false);
+        triggerAngryWordScramble();
         break;
-      case "demo-save-delay":
-        saveDocument("delay");
+      case 'demo-save-rate':
+        triggerSaveFlow('rate');
         break;
-      case "demo-meltdown":
-        if (YP.Modals && typeof YP.Modals.openMeltdownModal === "function") {
-          YP.Modals.openMeltdownModal();
-        } else {
-          emit("demo-meltdown", {});
-        }
+      case 'demo-save-delay':
+        triggerSaveFlow('delay');
         break;
-      case "help-scoreboard":
-        if (YP.Modals && typeof YP.Modals.openScoreboardModal === "function") {
-          YP.Modals.openScoreboardModal();
-        } else {
-          emit("help-scoreboard", {});
-        }
+      case 'demo-meltdown':
+        if (Modals) Modals.openMeltdownModal();
         break;
-      case "help-about":
-        if (YP.Modals && typeof YP.Modals.openAboutModal === "function") {
-          YP.Modals.openAboutModal();
-        }
+      case 'demo-ghostwrite':
+        startGhostwriting();
+        break;
+      case 'demo-reset-grudge':
+        resetGrudgeMemory();
+        break;
+      case 'help-scoreboard':
+        if (Modals) Modals.openScoreboardModal();
+        break;
+      case 'help-about':
+        if (Modals) Modals.openAboutModal();
         break;
       default:
-        emit("menu-action", { action: action, element: element });
         break;
     }
   }
 
-  function bindMenus() {
-    if (!dom || !dom.menuBar) return;
+  function wireEditorEvents() {
+    const textarea = el('editor-textarea');
+    if (!textarea) return;
 
-    const groups = dom.menuBar.querySelectorAll(".menu-group");
-    groups.forEach(function (group) {
-      const trigger = group.querySelector(".menu-trigger");
-      if (!trigger) return;
-
-      trigger.addEventListener("click", function (event) {
-        event.stopPropagation();
-        if (openMenuGroup === group) {
-          closeMenus();
-        } else {
-          openMenu(group);
-        }
-      });
-
-      trigger.addEventListener("mouseenter", function () {
-        if (openMenuGroup && openMenuGroup !== group) {
-          openMenu(group);
-        }
-      });
-    });
-
-    dom.menuBar.addEventListener("click", function (event) {
-      const item = event.target.closest(".menu-item");
-      if (!item) return;
-      event.stopPropagation();
-      handleMenuAction(item.getAttribute("data-action"), item);
-    });
-
-    document.addEventListener("click", function (event) {
-      if (openMenuGroup && !dom.menuBar.contains(event.target)) {
-        closeMenus();
+    textarea.addEventListener('scroll', syncBackdropAndGutter);
+    textarea.addEventListener('pointerdown', () => {
+      if (state.ghostTimer || state.ghostwriting) {
+        stopGhostwriting('user-click');
       }
     });
-  }
+    textarea.addEventListener('click', () => {
+      if (state.ghostTimer || state.ghostwriting) {
+        stopGhostwriting('user-click');
+      }
+      updateLineNumbersAndCounts();
+    });
+    textarea.addEventListener('keyup', updateLineNumbersAndCounts);
 
-  // ---------------------------------------------------------------------------
-  // Event Wiring & Global Shortcuts
-  // ---------------------------------------------------------------------------
-  function bindEvents() {
-    bindMenus();
+    textarea.addEventListener('keydown', (e) => {
+      const keyLower = (e.key || '').toLowerCase();
+      const ctrlOrMeta = e.ctrlKey || e.metaKey;
+      const isUndoKey = ctrlOrMeta && !e.altKey && !e.shiftKey && keyLower === 'z';
+      const isRedoKey =
+        ctrlOrMeta && !e.altKey && (keyLower === 'y' || (e.shiftKey && keyLower === 'z'));
 
-    if (dom.textarea) {
-      dom.textarea.addEventListener("input", function () {
-        ghostwriter.triggeredForIdle = false;
-        if (ghostwriter.justHaltedByKey) {
-          ghostwriter.justHaltedByKey = false;
-        } else {
-          clearGhostSnapshots();
-        }
-        markUserActivity();
-        setDirty(true);
-        syncBackdrop();
-        const metrics = updateCursorAndCounts();
-        emit("input", {
-          text: dom.textarea.value,
-          metrics: metrics,
-        });
-      });
+      if (isUndoKey && (state.ghostTimer || state.undoSnapshot !== null)) {
+        e.preventDefault();
+        undoDocument();
+        return;
+      }
+      if (isRedoKey && state.redoSnapshot !== null) {
+        e.preventDefault();
+        redoDocument();
+        return;
+      }
 
-      dom.textarea.addEventListener("scroll", syncScroll);
+      if (state.ghostTimer || state.ghostwriting) {
+        stopGhostwriting('user-key');
+      }
+      const now = Date.now();
+      state.lastKeyAt = now;
+      state.idle5Fired = false;
+      state.idle15Fired = false;
 
-      ["pointerdown", "mousedown"].forEach(function (evtName) {
-        dom.textarea.addEventListener(evtName, function () {
-          if (ghostwriter.active) {
-            stopGhostwriter("user-click");
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        const selStart = textarea.selectionStart || 0;
+        const selEnd = textarea.selectionEnd || 0;
+        const fullLen = textarea.value.length;
+
+        // Mass delete check (entire non-empty document selected)
+        if (fullLen >= 10 && selStart === 0 && selEnd === fullLen) {
+          state.undoSnapshot = captureEditorSnapshot(textarea);
+          if (root.YP.Modals) {
+            root.YP.Modals.openMeltdownModal();
           }
-        });
-      });
-
-      ["keyup", "click", "select", "focus"].forEach(function (evtName) {
-        dom.textarea.addEventListener(evtName, updateCursorAndCounts);
-      });
-
-      dom.textarea.addEventListener("keydown", function (event) {
-        const keyLower = (event.key || "").toLowerCase();
-        const ctrlOrMeta = event.ctrlKey || event.metaKey;
-        const isUndoKey = ctrlOrMeta && !event.altKey && !event.shiftKey && keyLower === "z";
-        const isRedoKey =
-          ctrlOrMeta &&
-          !event.altKey &&
-          (keyLower === "y" || (event.shiftKey && keyLower === "z"));
-
-        if (isUndoKey && (ghostwriter.active || ghostwriter.undoSnapshot)) {
-          event.preventDefault();
-          undoDocument();
-          emit("keydown", { event: event });
+          addCommentary('...You selected everything. And deleted it. I need a moment.', {
+            tag: '🗑️ Mass Delete'
+          });
           return;
         }
 
-        if (isRedoKey && ghostwriter.redoSnapshot) {
-          event.preventDefault();
-          redoDocument();
-          emit("keydown", { event: event });
-          return;
-        }
+        state.backspaces += 1;
+        const bsEl = el('stat-backspaces');
+        if (bsEl) bsEl.textContent = String(state.backspaces);
+        updateEscalation();
 
-        if (ghostwriter.active) {
-          stopGhostwriter("user-key");
+        const Moods = root.YP.Moods;
+        const Audio = root.YP.Audio;
+        if (Audio) Audio.playGuiltPop();
+
+        if (state.backspaces % 5 === 0) {
+          const line = Moods
+            ? Moods.getLine(state.mood, 'backspacePattern')
+            : 'Deleting again? This is becoming a pattern.';
+          addCommentary(line, { tag: `🗑️ Backspace #${state.backspaces}` });
+          if (root.YP.Ragebait) {
+            root.YP.Ragebait.onMistake({
+              token: `Backspace ×${state.backspaces}`,
+              message: line
+            });
+          }
+        } else if (state.backspaces % 2 === 1) {
+          const line = Moods
+            ? Moods.getLine(state.mood, 'backspace')
+            : 'Are you sure? You worked so hard on that.';
+          addCommentary(line, { tag: '🗑️ Guilt Trip' });
+        }
+        return;
+      }
+
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (state.sessionTypingStartAt === null) {
+          state.sessionTypingStartAt = now;
+        }
+        state.keyTimestamps.push(now);
+      }
+    });
+
+    // Instant 0ms mid-typing grammar/spelling & ragebait check
+    textarea.addEventListener('input', () => {
+      setDirty(true);
+      state.lastKeyAt = Date.now();
+      state.idle5Fired = false;
+      state.idle15Fired = false;
+      runGrammarCheck(true);
+      updateLineNumbersAndCounts();
+
+      // In Angry mood, scramble a recent completed word after every 3 words (10s cooldown)
+      if (state.mood === 'angry') {
+        const pos = textarea.selectionStart || 0;
+        if (pos > 0 && /[\s.,!?;:]$/.test(textarea.value.slice(0, pos))) {
+          state.angryWordsSinceScramble += 1;
           if (
-            isPrintableKeyEvent(event) ||
-            event.key === "Backspace" ||
-            event.key === "Delete" ||
-            event.key === "Enter"
+            state.angryWordsSinceScramble >= 3 &&
+            Date.now() - state.lastScrambleAt >= 10000
           ) {
-            ghostwriter.justHaltedByKey = true;
+            triggerAngryWordScramble();
           }
         }
-
-        if (isPrintableKeyEvent(event)) {
-          recordPrintableKeystroke();
-        } else if (
-          event.key === "Backspace" ||
-          event.key === "Delete" ||
-          event.key === "Enter"
-        ) {
-          ghostwriter.triggeredForIdle = false;
-          markUserActivity();
-        }
-        emit("keydown", { event: event });
-      });
-    }
-
-    if (dom.fileOpenInput) {
-      dom.fileOpenInput.addEventListener("change", function () {
-        const file = dom.fileOpenInput.files && dom.fileOpenInput.files[0];
-        if (file) loadFile(file);
-      });
-    }
-
-    if (dom.btnMute) {
-      dom.btnMute.addEventListener("click", function () {
-        const muted = YP.Audio ? YP.Audio.toggleMute() : false;
-        dom.btnMute.setAttribute("aria-pressed", muted ? "true" : "false");
-        const icon = dom.btnMute.querySelector(".mute-icon");
-        const label = dom.btnMute.querySelector(".mute-label");
-        if (icon) icon.textContent = muted ? "🔇" : "🔊";
-        if (label) label.textContent = muted ? "Muted" : "Sound";
-      });
-    }
-
-    if (dom.btnCloseWindow) {
-      dom.btnCloseWindow.addEventListener("click", requestClose);
-    }
-
-    if (dom.btnRestoreFont) {
-      dom.btnRestoreFont.addEventListener("click", restoreNormalFont);
-    }
-
-    if (dom.btnClearNotes) {
-      dom.btnClearNotes.addEventListener("click", function () {
-        if (!dom.commentaryFeed) return;
-        dom.commentaryFeed.innerHTML = "";
-        updateCommentaryCount();
-        emit("clear-notes", {});
-      });
-    }
-
-    if (dom.btnReopenYappad && dom.abandonedScreen) {
-      dom.btnReopenYappad.addEventListener("click", function () {
-        dom.abandonedScreen.hidden = true;
-        if (dom.textarea) dom.textarea.focus();
-      });
-    }
-
-    document.addEventListener("keydown", function (event) {
-      if (event.defaultPrevented) return;
-
-      const key = (event.key || "").toLowerCase();
-      const ctrlOrMeta = event.ctrlKey || event.metaKey;
-
-      if (ctrlOrMeta && !event.altKey && !event.shiftKey && key === "z") {
-        if (ghostwriter.active || ghostwriter.undoSnapshot) {
-          event.preventDefault();
-          undoDocument();
-          return;
-        }
-      }
-
-      if (
-        ctrlOrMeta &&
-        !event.altKey &&
-        (key === "y" || (event.shiftKey && key === "z"))
-      ) {
-        if (ghostwriter.redoSnapshot) {
-          event.preventDefault();
-          redoDocument();
-          return;
-        }
-      }
-
-      if (ghostwriter.active) {
-        stopGhostwriter("user-key");
-      }
-
-      if (key === "escape") {
-        if (openMenuGroup) {
-          closeMenus();
-          if (dom.textarea) dom.textarea.focus();
-        } else if (YP.Modals && YP.Modals.isOpen()) {
-          YP.Modals.close();
-        }
-        return;
-      }
-
-      if (event.altKey && !ctrlOrMeta && key === "n") {
-        event.preventDefault();
-        newDocument();
-        return;
-      }
-
-      if (ctrlOrMeta && !event.altKey && key === "o") {
-        event.preventDefault();
-        openDocumentPicker();
-        return;
-      }
-
-      if (ctrlOrMeta && !event.altKey && key === "s") {
-        event.preventDefault();
-        saveDocument();
-        return;
-      }
-
-      if (ctrlOrMeta && !event.altKey && key === "j") {
-        event.preventDefault();
-        handleMenuAction("ai-roast-now");
       }
     });
 
-    global.addEventListener("resize", syncScroll);
+    // Global keyboard shortcuts
+    if (typeof window !== 'undefined') {
+      window.addEventListener('keydown', (e) => {
+        if (e.defaultPrevented) return;
+        const key = (e.key || '').toLowerCase();
+        const ctrlOrMeta = e.ctrlKey || e.metaKey;
+        const Modals = root.YP.Modals;
+        const modalOpen = Boolean(Modals && typeof Modals.isOpen === 'function' && Modals.isOpen());
+
+        if (ctrlOrMeta && !e.altKey && key === 's') {
+          e.preventDefault();
+          handleAction('file-save');
+        } else if (key === 'escape') {
+          if (modalOpen) {
+            if (typeof Modals.isDismissible !== 'function' || Modals.isDismissible()) {
+              Modals.closeModal();
+            } else if (typeof Modals.shakeActiveModal === 'function') {
+              Modals.shakeActiveModal();
+            }
+          } else if (root.YP.Ragebait) {
+            root.YP.Ragebait.clearAll();
+          }
+        } else if (modalOpen) {
+          return;
+        } else if (ctrlOrMeta && !e.altKey && key === 'j') {
+          e.preventDefault();
+          handleAction('ai-roast-now');
+        } else if (ctrlOrMeta && !e.altKey && key === 'o') {
+          e.preventDefault();
+          handleAction('file-open');
+        } else if (e.altKey && !ctrlOrMeta && key === 'n') {
+          e.preventDefault();
+          handleAction('file-new');
+        } else if (ctrlOrMeta && !e.altKey && !e.shiftKey && key === 'z' && (state.ghostTimer || state.undoSnapshot !== null)) {
+          e.preventDefault();
+          handleAction('edit-undo');
+        } else if (ctrlOrMeta && !e.altKey && (key === 'y' || (e.shiftKey && key === 'z')) && state.redoSnapshot !== null) {
+          e.preventDefault();
+          handleAction('edit-redo');
+        }
+      });
+
+      // Eye-tracking pupils (rAF-throttled)
+      const applyPupilGaze = (clientX, clientY) => {
+        const face = el('yappad-face');
+        const pL = el('pupil-left');
+        const pR = el('pupil-right');
+        if (!face || !pL || !pR) return;
+        const rect = face.getBoundingClientRect();
+        if (!rect || rect.width <= 0 || rect.height <= 0) return;
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const angle = Math.atan2(clientY - cy, clientX - cx);
+        const dist = Math.min(1.4, Math.hypot(clientX - cx, clientY - cy) / 90);
+        const dx = Math.cos(angle) * dist;
+        const dy = Math.sin(angle) * dist;
+        pL.setAttribute('cx', (8.5 + dx).toFixed(2));
+        pL.setAttribute('cy', (10.5 + dy).toFixed(2));
+        pR.setAttribute('cx', (15.5 + dx).toFixed(2));
+        pR.setAttribute('cy', (10.5 + dy).toFixed(2));
+      };
+
+      window.addEventListener('mousemove', (e) => {
+        state.pendingPointer = { x: e.clientX, y: e.clientY };
+        if (typeof window.requestAnimationFrame === 'function') {
+          if (state.eyeTrackRaf) return;
+          state.eyeTrackRaf = window.requestAnimationFrame(() => {
+            state.eyeTrackRaf = null;
+            if (state.pendingPointer) {
+              applyPupilGaze(state.pendingPointer.x, state.pendingPointer.y);
+            }
+          });
+        } else {
+          applyPupilGaze(e.clientX, e.clientY);
+        }
+      });
+
+      if (typeof document !== 'undefined' && document.documentElement) {
+        document.documentElement.addEventListener('mouseleave', () => {
+          state.pendingPointer = null;
+          const pL = el('pupil-left');
+          const pR = el('pupil-right');
+          if (pL) {
+            pL.setAttribute('cx', '8.5');
+            pL.setAttribute('cy', '10.5');
+          }
+          if (pR) {
+            pR.setAttribute('cx', '15.5');
+            pR.setAttribute('cy', '10.5');
+          }
+        });
+      }
+
+      window.addEventListener('beforeunload', (e) => {
+        if (state.dirty) {
+          e.preventDefault();
+          e.returnValue = 'YapPad will remember if you abandon this tab without saving.';
+        }
+      });
+    }
   }
 
-  // ---------------------------------------------------------------------------
-  // Bootstrap
-  // ---------------------------------------------------------------------------
   function init() {
-    if (initialized || typeof document === "undefined") return;
-    initialized = true;
-
-    dom = queryDom();
-    bindEvents();
-
-    setEditorFontSize(DEFAULT_FONT_SIZE);
-    setMood(state.mood);
-    setEscalation(state.escalation);
-    setFilename(DEFAULT_FILENAME);
+    if (typeof document === 'undefined') return;
+    state.sessionStartedAt = Date.now();
+    loadGrudgeState();
+    wireMenusAndControls();
+    wireEditorEvents();
     setDirty(false);
-    setErrorCount(0);
-    resetTypingJudge();
-    syncBackdrop([]);
-    updateCursorAndCounts();
-    updateCommentaryCount();
-    startTelemetry();
+    syncMoodMenuState(state.mood);
+    updateAIBadge();
+    updateEscalation();
+    updateFaceExpression();
 
-    if (dom.textarea) {
-      dom.textarea.focus();
+    if (state.remembersClose) {
+      const msg = `Oh. You again. I still remember the ${state.closeCount} time${state.closeCount === 1 ? '' : 's'} you closed me.`;
+      addCommentary(msg, { category: 'Grudge Memory', tag: '👁️ Grudge Memory', highlight: false });
+    } else {
+      addCommentary('Oh. You again.', { category: 'Startup', tag: 'Startup', highlight: false });
     }
 
-    emit("ready", { state: state, dom: dom });
+    state.telemetryTimer = setInterval(tickTelemetry, SPEED_CONFIG.TELEMETRY_INTERVAL_MS);
+    restartMoodTimer();
   }
 
-  YP.App = {
-    DEFAULT_FONT_SIZE: DEFAULT_FONT_SIZE,
-    SPEED_CONFIG: SPEED_CONFIG,
-    state: state,
-    get dom() {
-      return dom;
-    },
-    init: init,
-    on: on,
-    off: off,
-    emit: emit,
-    computeTextMetrics: computeTextMetrics,
-    syncBackdrop: syncBackdrop,
-    syncScroll: syncScroll,
-    updateLineNumbers: updateLineNumbers,
-    updateCursorAndCounts: updateCursorAndCounts,
-    setEditorFontSize: setEditorFontSize,
-    restoreNormalFont: restoreNormalFont,
-    setDirty: setDirty,
-    setFilename: setFilename,
-    setStatus: setStatus,
-    setWpm: setWpm,
-    setBackspaceCount: setBackspaceCount,
-    setErrorCount: setErrorCount,
-    setMood: setMood,
-    setEscalation: setEscalation,
-    addCommentary: addCommentary,
-    showToast: showToast,
-    isPrintableKeyEvent: isPrintableKeyEvent,
-    recordPrintableKeystroke: recordPrintableKeystroke,
-    markUserActivity: markUserActivity,
-    computeRollingWpm: computeRollingWpm,
-    renderWpmSparkline: renderWpmSparkline,
-    triggerWindowShake: triggerWindowShake,
-    runTelemetryTick: runTelemetryTick,
-    resetTypingJudge: resetTypingJudge,
-    startTelemetry: startTelemetry,
-    stopTelemetry: stopTelemetry,
-    startGhostwriter: startGhostwriter,
-    stopGhostwriter: stopGhostwriter,
-    stepGhostwriter: stepGhostwriter,
-    undoDocument: undoDocument,
-    redoDocument: redoDocument,
-    hasGhostUndoSnapshot: hasGhostUndoSnapshot,
-    newDocument: newDocument,
-    openDocumentPicker: openDocumentPicker,
-    loadFile: loadFile,
-    downloadDocument: downloadDocument,
-    saveDocument: saveDocument,
-    requestClose: requestClose,
-  };
-
-  if (typeof document !== "undefined") {
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", init);
+  if (typeof document !== 'undefined') {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
     } else {
       init();
     }
   }
-})(typeof window !== "undefined" ? window : globalThis);
+
+  root.YP.App = {
+    MAX_COMMENTARY_CARDS,
+    MAX_TOASTS,
+    DEFAULT_TOAST_DURATION_MS,
+    SPEED_CONFIG,
+    state,
+    init,
+    setDirty,
+    escapeHTML,
+    setMood,
+    runGrammarCheck,
+    applyFontShrinkPunishment,
+    restoreNormalFont,
+    insertRoastableSampleText,
+    triggerAIRoast,
+    triggerAngryWordScramble,
+    computeRollingWpm,
+    tickTelemetry,
+    startGhostwriting,
+    stopGhostwriting,
+    undoDocument,
+    redoDocument,
+    resetGrudgeMemory,
+    addCommentary,
+    clearCommentary,
+    showToast,
+    getTelemetry,
+    updateAIBadge,
+    downloadTextFile,
+    downloadDocument,
+    saveDocument: triggerSaveFlow,
+    onSaveCompleted(note, meta = {}) {
+      if (meta && meta.filename) {
+        state.filename = ensureTxtFilename(meta.filename);
+        const docNameEl = el('doc-filename');
+        if (docNameEl) docNameEl.textContent = state.filename;
+      }
+      setDirty(false);
+      addCommentary(note, { category: 'Saved', tag: '💾 Saved' });
+      showToast(note, 'success');
+    }
+  };
+})();

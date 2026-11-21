@@ -1,16 +1,9 @@
-# Environment secrets
 .env
 .env.*
 !.env.example
-
-# Node dependencies
 node_modules/
-
-# Logs
-*.log
-logs/
-npm-debug.log*
-
-# OS & editor artifacts
+__pycache__/
+*.pyc
+venv/
 .DS_Store
-Thumbs.db
+*.log
