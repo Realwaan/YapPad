@@ -90,4 +90,30 @@ const intelRoast = YP.AI.generateOfflineRoast(
 );
 assert.ok(intelRoast.includes('(') && intelRoast.includes(')'), 'Intellectual offline roast must include a fake citation');
 
+// 5. All 13 procedural Web Audio cues exist and safely no-op in Node (enabled and muted)
+const audioCues = [
+  'playSigh',
+  'playDisappointmentDing',
+  'playPanicPip',
+  'playGuiltPop',
+  'playOrchestralSting',
+  'playSuspenseMusic',
+  'playSadViolin',
+  'playAngryBuzz',
+  'playSupportiveChime',
+  'playRoastPop',
+  'playRageBuzzer',
+  'playCornerZip',
+  'playShrinkSqueak'
+];
+for (const cue of audioCues) {
+  assert.equal(typeof YP.Audio[cue], 'function', `Missing YP.Audio.${cue}`);
+  assert.doesNotThrow(() => YP.Audio[cue](), `YP.Audio.${cue} threw in Node`);
+}
+YP.Audio.setEnabled(false);
+for (const cue of audioCues) {
+  assert.equal(YP.Audio[cue](), false, `Muted YP.Audio.${cue} should return false`);
+}
+YP.Audio.setEnabled(true);
+
 console.log('ALL_UNIT_CHECKS_PASSED');
