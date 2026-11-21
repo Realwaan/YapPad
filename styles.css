@@ -267,6 +267,7 @@ html, body {
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
   white-space: nowrap;
+  cursor: pointer;
 }
 
 .titlebar-docname.is-dirty::after {
@@ -585,9 +586,112 @@ body[data-ghostwriting="true"] .editor-pane {
   animation: pulseBeg 1.3s infinite ease-in-out;
 }
 
+.ribbon-btn-toner {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  color: hsl(4, 78%, 34%);
+  animation: pulseBeg 1.5s infinite ease-in-out;
+}
+
 @keyframes pulseBeg {
   0%, 100% { transform: scale(1); }
   50% { transform: scale(1.03); }
+}
+
+/* Fake Free Trial Expired Nag Bar */
+.trial-nag-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+  padding: 4px 10px;
+  background: linear-gradient(90deg, hsl(44, 92%, 88%), hsl(38, 88%, 83%));
+  border-bottom: 1px solid hsl(36, 70%, 58%);
+  color: hsl(28, 72%, 22%);
+  font-size: 11.5px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.trial-nag-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trial-nag-btn {
+  height: 21px;
+  padding: 0 8px;
+  border-radius: 4px;
+  border: 1px solid hsl(28, 74%, 38%);
+  background: hsl(34, 88%, 42%);
+  color: #fff;
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.trial-nag-btn:hover {
+  filter: brightness(0.92);
+}
+
+/* Unwanted "Yappy" Paperclip Assistant */
+.yappy-assistant {
+  position: absolute;
+  bottom: 42px;
+  left: 52px;
+  width: min(290px, calc(100% - 310px));
+  background: var(--bg-card);
+  border: 2px solid var(--accent-primary);
+  border-radius: 10px;
+  box-shadow: var(--shadow-modal);
+  padding: 10px 12px;
+  pointer-events: auto;
+  z-index: 54;
+  transform-origin: bottom left;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+  animation: yappyBounceIn 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+
+@keyframes yappyBounceIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.92); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.yappy-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.yappy-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--accent-ink);
+}
+
+.yappy-message {
+  margin: 0 0 9px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+
+.yappy-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 /* Main Workspace */
@@ -606,6 +710,7 @@ body[data-ghostwriting="true"] .editor-pane {
   min-height: 0;
   position: relative;
   background: var(--bg-paper);
+  overflow: hidden;
 }
 
 .line-numbers {
@@ -629,6 +734,12 @@ body[data-ghostwriting="true"] .editor-pane {
   min-height: 0;
   position: relative;
   overflow: hidden;
+  transition: transform 0.25s ease;
+}
+
+.editor-stage.is-yelling-tilt {
+  transform: rotate(1.15deg);
+  transform-origin: 40% 25%;
 }
 
 /* Pixel-Synced Backdrop and Textarea */
@@ -653,6 +764,13 @@ body[data-ghostwriting="true"] .editor-pane {
   overflow-x: hidden;
 }
 
+body[data-font-crime="comic"] #editor-backdrop,
+body[data-font-crime="comic"] #editor-textarea,
+body[data-font-crime="comic"] .line-numbers {
+  font-family: "Comic Sans MS", "Chalkboard SE", "Comic Neue", cursive;
+  letter-spacing: 0.4px;
+}
+
 #editor-backdrop {
   color: transparent;
   pointer-events: none;
@@ -662,11 +780,13 @@ body[data-ghostwriting="true"] .editor-pane {
 #editor-textarea {
   background: transparent;
   color: var(--text-primary);
+  opacity: var(--editor-ink-opacity, 1);
   caret-color: var(--accent-primary);
   resize: none;
   outline: none;
   z-index: 2;
   user-select: text;
+  transition: opacity 0.25s ease;
 }
 
 #editor-textarea::placeholder {
@@ -1320,8 +1440,8 @@ body[data-mood="supportive"] #weather-layer::before,
   z-index: 52;
 }
 
-.corner-stalker-card[data-corner="top-left"] { top: 82px; left: 14px; }
-.corner-stalker-card[data-corner="top-right"] { top: 82px; right: 14px; }
+.corner-stalker-card[data-corner="top-left"] { top: 172px; left: 14px; }
+.corner-stalker-card[data-corner="top-right"] { top: 172px; right: 14px; }
 .corner-stalker-card[data-corner="bottom-right"] { bottom: 48px; right: 14px; }
 .corner-stalker-card[data-corner="bottom-left"] { bottom: 48px; left: 14px; }
 
@@ -1349,7 +1469,7 @@ body[data-mood="supportive"] #weather-layer::before,
   flex-direction: column;
   align-items: flex-end;
   gap: 7px;
-  z-index: 60;
+  z-index: 45;
   pointer-events: none;
   max-width: min(310px, calc(100% - 295px));
 }

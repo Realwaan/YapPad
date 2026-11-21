@@ -83,7 +83,7 @@
       const layerW = layerRect.width || 862;
       const layerH = layerRect.height || 694;
       const padX = 14;
-      const minTop = 76;
+      const minTop = 108;
       const padBottom = 40;
       const minLeft = padX;
       const maxLeft = Math.max(minLeft, layerW - cardW - padX);
@@ -326,7 +326,7 @@
     card.className = 'shrinking-error-card';
 
     const slot = shrinkingCards.length;
-    card.style.top = `${128 + slot * 78}px`;
+    card.style.top = `${172 + slot * 76}px`;
     card.style.right = `${285 + (slot % 2) * 34}px`;
     card.style.transform = `scale(${SHRINK_STEPS[0]})`;
     card.setAttribute('data-scale', String(SHRINK_STEPS[0]));

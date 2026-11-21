@@ -115,6 +115,10 @@
             <button id="menu-demo-sample" type="button" class="menu-item" data-action="demo-sample">
               <span>Insert Roastable Sample Text</span><span class="menu-shortcut">Stage</span>
             </button>
+            <button id="menu-demo-max-annoyance" type="button" class="menu-item" data-action="demo-max-annoyance">
+              <span>Unleash Maximum Annoyance</span><span class="menu-shortcut">🔥 All</span>
+            </button>
+            <div class="menu-divider"></div>
             <button id="menu-demo-scramble" type="button" class="menu-item" data-action="demo-scramble">
               <span>Trigger Angry Word Scramble</span><span class="menu-shortcut">😡</span>
             </button>
@@ -131,6 +135,22 @@
               <span>Trigger 15s Ghost-Writing</span><span class="menu-shortcut">👻</span>
             </button>
             <div class="menu-divider"></div>
+            <button id="menu-demo-low-toner" type="button" class="menu-item" data-action="demo-low-toner">
+              <span>Drop Virtual Toner (Low Ink)</span><span class="menu-shortcut">🖨️</span>
+            </button>
+            <button id="menu-demo-yappy" type="button" class="menu-item" data-action="demo-yappy">
+              <span>Summon Yappy Assistant</span><span class="menu-shortcut">📎</span>
+            </button>
+            <button id="menu-demo-trial-nag" type="button" class="menu-item" data-action="demo-trial-nag">
+              <span>Show Fake Trial Nag</span><span class="menu-shortcut">⚠️</span>
+            </button>
+            <button id="menu-demo-typography-chaos" type="button" class="menu-item" data-action="demo-typography-chaos">
+              <span>Typography Crime (Comic Sans)</span><span class="menu-shortcut">🔠</span>
+            </button>
+            <div class="menu-divider"></div>
+            <button id="menu-demo-restore-sanity" type="button" class="menu-item" data-action="demo-restore-sanity">
+              <span>Calm Down / Restore Sanity</span><span class="menu-shortcut">🕊️</span>
+            </button>
             <button id="menu-demo-reset-grudge" type="button" class="menu-item" data-action="demo-reset-grudge">
               <span>Reset Grudge Memory</span><span class="menu-shortcut">Stage 0</span>
             </button>
@@ -185,6 +205,9 @@
         </div>
 
         <div class="ribbon-actions">
+          <button id="btn-shake-toner" type="button" class="ribbon-btn ribbon-btn-toner" hidden>
+            🖨️ Toner: 24% — Shake
+          </button>
           <button id="btn-restore-font" type="button" class="ribbon-btn ribbon-btn-beg" hidden>
             🔍 Beg For Normal Font
           </button>
@@ -193,6 +216,16 @@
           </button>
         </div>
       </section>
+
+      <!-- Fake Free Trial Expired Nag Bar -->
+      <div id="trial-nag-bar" class="trial-nag-bar" role="status" aria-live="polite" hidden>
+        <span id="trial-nag-text" class="trial-nag-text">
+          ⚠️ Your YapPad Free Trial expired 4 seconds ago. Typing vowels now requires emotional collateral.
+        </span>
+        <button id="btn-trial-dignity" type="button" class="trial-nag-btn">
+          Pay With Dignity
+        </button>
+      </div>
 
       <!-- Main Workspace -->
       <div class="workspace-main">
@@ -279,7 +312,22 @@
       <div id="weather-layer" aria-hidden="true"></div>
 
       <!-- Ragebait Overlay Layer -->
-      <div id="ragebait-layer" aria-live="polite"></div>
+      <div id="ragebait-layer" aria-live="polite">
+        <!-- Unwanted "Yappy" Paperclip Assistant -->
+        <aside id="yappy-assistant" class="yappy-assistant" aria-label="Yappy Writing Assistant" hidden>
+          <div class="yappy-header">
+            <span class="yappy-title">📎 Yappy — Unwanted Assistant</span>
+            <button id="yappy-close-x" type="button" class="ragebait-close-x" title="Dismiss Yappy (for 20s)" aria-label="Dismiss Yappy">✕</button>
+          </div>
+          <p id="yappy-message" class="yappy-message">
+            Hi! It looks like you are trying to take notes. Want me to make that harder?
+          </p>
+          <div class="yappy-actions">
+            <button id="yappy-btn-yes" type="button" class="ragebait-btn ragebait-btn-primary">Yes, Ruin My Focus</button>
+            <button id="yappy-btn-no" type="button" class="ragebait-btn">Go Away Forever</button>
+          </div>
+        </aside>
+      </div>
 
       <!-- Non-blocking Toast Stack -->
       <div id="toast-stack" role="region" aria-label="Notifications" aria-live="polite" aria-atomic="false"></div>
@@ -319,6 +367,7 @@
   <script defer src="js/ai.js"></script>
   <script defer src="js/modals.js"></script>
   <script defer src="js/ragebait.js"></script>
+  <script defer src="js/annoyances.js"></script>
   <script defer src="js/app.js"></script>
 </body>
 </html>

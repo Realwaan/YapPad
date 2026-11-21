@@ -33,6 +33,7 @@ try {
     '/js/ai.js',
     '/js/modals.js',
     '/js/ragebait.js',
+    '/js/annoyances.js',
     '/js/app.js',
     '/health'
   ];
