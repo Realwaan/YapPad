@@ -666,6 +666,7 @@
         const Audio = root.YP.Audio;
         const on = Audio ? Audio.getConfig().enabled : true;
         audioBtn.textContent = on ? '🔊 Audio: On' : '🔇 Audio: Muted';
+        audioBtn.setAttribute('aria-pressed', on ? 'false' : 'true');
       };
       syncAudioBtn();
       audioBtn.addEventListener('click', () => {
