@@ -365,6 +365,31 @@
       return playToneSequence([
         { type: 'triangle', freq: 820, endFreq: 1320, duration: 0.08, gain: 0.16 }
       ]);
+    },
+    playPlagiarismAlarm() {
+      return playToneSequence([
+        { type: 'sawtooth', freq: 780, endFreq: 580, duration: 0.16, delay: 0.0, gain: 0.2 },
+        { type: 'sawtooth', freq: 580, endFreq: 780, duration: 0.16, delay: 0.17, gain: 0.2 },
+        { type: 'triangle', freq: 780, endFreq: 540, duration: 0.2, delay: 0.34, gain: 0.22 }
+      ]);
+    },
+    playFakeErrorBonk() {
+      return playToneSequence([
+        { type: 'square', freq: 190, endFreq: 115, duration: 0.14, delay: 0.0, gain: 0.24 },
+        { type: 'triangle', freq: 140, endFreq: 95, duration: 0.16, delay: 0.05, gain: 0.22 }
+      ]);
+    },
+    playCartridgeShake() {
+      const n1 = playFilteredNoise({ duration: 0.09, delay: 0.0, startFreq: 1800, endFreq: 900, q: 2.2, gain: 0.24 });
+      const n2 = playFilteredNoise({ duration: 0.09, delay: 0.11, startFreq: 2100, endFreq: 1100, q: 2.2, gain: 0.26 });
+      const n3 = playFilteredNoise({ duration: 0.11, delay: 0.22, startFreq: 1600, endFreq: 800, q: 2.0, gain: 0.22 });
+      return n1 || n2 || n3;
+    },
+    playTypewriterDing() {
+      return playToneSequence([
+        { type: 'sine', freq: 1760, endFreq: 1750, duration: 0.32, delay: 0.0, gain: 0.2 },
+        { type: 'triangle', freq: 3520, endFreq: 3480, duration: 0.18, delay: 0.0, gain: 0.09 }
+      ]);
     }
   };
 

@@ -142,4 +142,62 @@ assert.equal(YP.Audio.playSuspenseMusic(5), false, 'playSuspenseMusic should saf
 assert.equal(YP.Audio.playDisappointmentDing(), false, 'playDisappointmentDing should safely no-op in Node');
 YP.Audio.stopSuspenseMusic();
 
+// 7. Ragebait Writing Violation click-avoidance dodge export
+assert.ok(
+  typeof YP.Ragebait.DEFAULT_CENTER_DODGES === 'number' && YP.Ragebait.DEFAULT_CENTER_DODGES >= 1,
+  'YP.Ragebait.DEFAULT_CENTER_DODGES must be a positive number'
+);
+
+// 8. Note-taking annoyance engine (4 extra audio cues + YP.Annoyances unit checks)
+await import('./js/annoyances.js');
+assert.ok(YP.Annoyances, 'YP.Annoyances module should be initialized');
+
+const extraAudioCues = [
+  'playPlagiarismAlarm',
+  'playFakeErrorBonk',
+  'playCartridgeShake',
+  'playTypewriterDing'
+];
+for (const cue of extraAudioCues) {
+  assert.equal(typeof YP.Audio[cue], 'function', `Missing YP.Audio.${cue}`);
+  assert.doesNotThrow(() => YP.Audio[cue](), `YP.Audio.${cue} threw in Node`);
+}
+
+assert.ok(
+  YP.Annoyances.formatPasteWatermark(2).includes('Ctrl+V #2'),
+  'Paste watermark must include paste count'
+);
+assert.ok(
+  YP.Annoyances.formatCopySignature({ errors: 3, backspaces: 5 }).includes('3 sins, 5 backspaces'),
+  'Copy signature must include live sins and backspaces telemetry'
+);
+assert.equal(YP.Annoyances.isShoutingText('STOP YELLING RIGHT NOW'), true, 'Shouting detector must catch 2+ ALL-CAPS words');
+assert.equal(YP.Annoyances.isShoutingText('Hello World from YapPad'), false, 'Shouting detector must ignore normal casing');
+
+const dropped = YP.Annoyances.dropToner(20);
+assert.equal(dropped.toner, 20, 'dropToner should set virtual toner to requested level');
+assert.ok(dropped.opacity < 0.9 && dropped.opacity >= 0.54, `Low toner opacity must fade safely (${dropped.opacity})`);
+const refilled = YP.Annoyances.shakeTonerCartridge();
+assert.equal(refilled.toner, 100, 'shakeTonerCartridge must refill toner to 100%');
+assert.equal(refilled.opacity, 1, 'shakeTonerCartridge must restore opacity to 1');
+
+const renamed = YP.Annoyances.escalateFilename(true);
+assert.ok(renamed.endsWith('.txt') && renamed !== 'untitled_regret.txt', `Expected escalated filename, got ${renamed}`);
+
+YP.Annoyances.handleVisibilityChange(true, 1000);
+const tabBack = YP.Annoyances.handleVisibilityChange(false, 5000);
+assert.equal(tabBack.status, 'jealous', 'Returning after >=3s away should trigger tab-switch jealousy');
+
+YP.Annoyances.summonYappy();
+assert.equal(YP.Annoyances.state.yappyVisible, true, 'summonYappy should show Yappy');
+YP.Annoyances.showTrialNag();
+assert.equal(YP.Annoyances.state.trialNagVisible, true, 'showTrialNag should show trial nag');
+YP.Annoyances.applyTypographyChaos('comic');
+assert.equal(YP.Annoyances.state.fontCrime, 'comic', 'applyTypographyChaos should set comic fontCrime');
+YP.Annoyances.restoreSanity();
+assert.equal(YP.Annoyances.state.yappyVisible, false, 'restoreSanity must hide Yappy');
+assert.equal(YP.Annoyances.state.trialNagVisible, false, 'restoreSanity must hide trial nag');
+assert.equal(YP.Annoyances.state.fontCrime, 'none', 'restoreSanity must clear fontCrime');
+assert.equal(YP.Annoyances.state.toner, 100, 'restoreSanity must restore toner to 100%');
+
 console.log('ALL_UNIT_CHECKS_PASSED');

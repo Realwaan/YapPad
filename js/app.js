@@ -628,6 +628,9 @@
     const escEl = el('stat-escalation');
     if (escEl) escEl.textContent = `${state.escalation}/4`;
     updateFaceExpression();
+    if (root.YP.Annoyances && typeof root.YP.Annoyances.onEscalationChanged === 'function') {
+      root.YP.Annoyances.onEscalationChanged(state.escalation);
+    }
   }
 
   function setMood(nextMood, announce = true) {
@@ -1387,7 +1390,9 @@
       const dodgeAutocorrect = (e) => {
         e.preventDefault();
         state.autocorrectFlip = state.autocorrectFlip === 1 ? -1 : 1;
-        autoBtn.style.transform = `translate(${state.autocorrectFlip * -34}px, ${state.autocorrectFlip * 4}px)`;
+        const dx = state.autocorrectFlip === 1 ? -40 : -10;
+        const dy = state.autocorrectFlip === 1 ? 4 : -4;
+        autoBtn.style.transform = `translate(${dx}px, ${dy}px)`;
         if (root.YP.Audio) root.YP.Audio.playCornerZip();
         addCommentary('I won\'t fix that. You need to learn.', { tag: '✨ Autocorrect Refused' });
       };
@@ -1627,6 +1632,9 @@
         break;
       case 'clear-ragebait':
         if (Ragebait) Ragebait.clearAll();
+        if (root.YP.Annoyances && typeof root.YP.Annoyances.dismissYappy === 'function') {
+          root.YP.Annoyances.dismissYappy(true);
+        }
         break;
       case 'set-mood':
         if (itemEl) {
@@ -1641,6 +1649,11 @@
         break;
       case 'demo-sample':
         insertRoastableSampleText();
+        break;
+      case 'demo-max-annoyance':
+        if (root.YP.Annoyances && typeof root.YP.Annoyances.unleashMaximumAnnoyance === 'function') {
+          root.YP.Annoyances.unleashMaximumAnnoyance();
+        }
         break;
       case 'demo-scramble':
         setMood('angry', false);
@@ -1661,6 +1674,31 @@
       case 'demo-ghostwrite':
         startGhostwriting();
         break;
+      case 'demo-low-toner':
+        if (root.YP.Annoyances && typeof root.YP.Annoyances.dropToner === 'function') {
+          root.YP.Annoyances.dropToner(22);
+        }
+        break;
+      case 'demo-yappy':
+        if (root.YP.Annoyances && typeof root.YP.Annoyances.summonYappy === 'function') {
+          root.YP.Annoyances.summonYappy();
+        }
+        break;
+      case 'demo-trial-nag':
+        if (root.YP.Annoyances && typeof root.YP.Annoyances.showTrialNag === 'function') {
+          root.YP.Annoyances.showTrialNag();
+        }
+        break;
+      case 'demo-typography-chaos':
+        if (root.YP.Annoyances && typeof root.YP.Annoyances.applyTypographyChaos === 'function') {
+          root.YP.Annoyances.applyTypographyChaos('comic');
+        }
+        break;
+      case 'demo-restore-sanity':
+        if (root.YP.Annoyances && typeof root.YP.Annoyances.restoreSanity === 'function') {
+          root.YP.Annoyances.restoreSanity();
+        }
+        break;
       case 'demo-reset-grudge':
         resetGrudgeMemory();
         break;
@@ -1679,7 +1717,22 @@
     const textarea = el('editor-textarea');
     if (!textarea) return;
 
-    textarea.addEventListener('scroll', syncBackdropAndGutter);
+    textarea.addEventListener('scroll', () => {
+      syncBackdropAndGutter();
+      if (root.YP.Annoyances && typeof root.YP.Annoyances.scheduleScrollDrift === 'function') {
+        root.YP.Annoyances.scheduleScrollDrift();
+      }
+    });
+    textarea.addEventListener('paste', (e) => {
+      if (root.YP.Annoyances && typeof root.YP.Annoyances.handlePaste === 'function') {
+        root.YP.Annoyances.handlePaste(e);
+      }
+    });
+    textarea.addEventListener('copy', (e) => {
+      if (root.YP.Annoyances && typeof root.YP.Annoyances.handleCopy === 'function') {
+        root.YP.Annoyances.handleCopy(e);
+      }
+    });
     textarea.addEventListener('pointerdown', () => {
       if (state.ghostTimer || state.ghostwriting) {
         stopGhostwriting('user-click');
@@ -1719,6 +1772,24 @@
       state.idle5Fired = false;
       state.idle15Fired = false;
 
+      if (
+        e.key === 'Tab' &&
+        root.YP.Annoyances &&
+        typeof root.YP.Annoyances.handleTabKey === 'function' &&
+        root.YP.Annoyances.handleTabKey(e)
+      ) {
+        return;
+      }
+
+      if (
+        e.key === 'Enter' &&
+        root.YP.Annoyances &&
+        typeof root.YP.Annoyances.handleEnterKey === 'function' &&
+        root.YP.Annoyances.handleEnterKey(e)
+      ) {
+        return;
+      }
+
       if (e.key === 'Backspace' || e.key === 'Delete') {
         handleDeletionKeydown(e, now);
         return;
@@ -1740,6 +1811,15 @@
       state.idle15Fired = false;
       runGrammarCheck(true);
       updateLineNumbersAndCounts();
+
+      if (root.YP.Annoyances) {
+        if (typeof root.YP.Annoyances.consumeInk === 'function') {
+          root.YP.Annoyances.consumeInk(1);
+        }
+        if (typeof root.YP.Annoyances.checkShouting === 'function') {
+          root.YP.Annoyances.checkShouting(textarea.value);
+        }
+      }
 
       // In Angry mood, scramble a recent completed word after every 3 words (10s cooldown)
       if (state.mood === 'angry') {
@@ -1775,10 +1855,19 @@
             } else if (typeof Modals.shakeActiveModal === 'function') {
               Modals.shakeActiveModal();
             }
-          } else if (root.YP.Ragebait) {
-            root.YP.Ragebait.clearAll();
+          } else {
+            if (root.YP.Ragebait) root.YP.Ragebait.clearAll();
+            if (root.YP.Annoyances && typeof root.YP.Annoyances.dismissYappy === 'function') {
+              root.YP.Annoyances.dismissYappy(true);
+            }
           }
         } else if (modalOpen) {
+          return;
+        } else if (
+          root.YP.Annoyances &&
+          typeof root.YP.Annoyances.handleForbiddenShortcut === 'function' &&
+          root.YP.Annoyances.handleForbiddenShortcut(e)
+        ) {
           return;
         } else if (ctrlOrMeta && !e.altKey && key === 'j') {
           e.preventDefault();
@@ -1858,6 +1947,29 @@
     }
   }
 
+  function setFilename(name) {
+    state.filename = ensureTxtFilename(name);
+    const docNameEl = el('doc-filename');
+    if (docNameEl) docNameEl.textContent = state.filename;
+    setDirty(state.dirty);
+    return state.filename;
+  }
+
+  function captureUndoSnapshot() {
+    const textarea = el('editor-textarea');
+    if (!textarea) return null;
+    state.undoSnapshot = captureEditorSnapshot(textarea);
+    state.redoSnapshot = null;
+    return state.undoSnapshot;
+  }
+
+  function syncAfterTextMutation(triggerRagebait = false) {
+    setDirty(true);
+    runGrammarCheck(Boolean(triggerRagebait));
+    updateLineNumbersAndCounts();
+    syncBackdropAndGutter();
+  }
+
   function init() {
     if (typeof document === 'undefined') return;
     state.sessionStartedAt = Date.now();
@@ -1869,6 +1981,9 @@
     updateAIBadge();
     updateEscalation();
     updateFaceExpression();
+    if (root.YP.Annoyances && typeof root.YP.Annoyances.init === 'function') {
+      root.YP.Annoyances.init();
+    }
 
     if (state.remembersClose) {
       const msg = `Oh. You again. I still remember the ${state.closeCount} time${state.closeCount === 1 ? '' : 's'} you closed me.`;
@@ -1898,7 +2013,11 @@
     state,
     init,
     setDirty,
+    setFilename,
     setStatusMessage,
+    captureUndoSnapshot,
+    syncAfterTextMutation,
+    syncBackdropAndGutter,
     escapeHTML,
     setMood,
     runGrammarCheck,

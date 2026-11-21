@@ -1229,10 +1229,10 @@
           Live session proof: <strong>${escapeHTML(stats.words)} words</strong>, <strong>${escapeHTML(stats.wpm)} WPM</strong>, <strong>${escapeHTML(stats.errors)} sins</strong>, <strong>${escapeHTML(stats.backspaces)} backspaces</strong>, mood <strong>${escapeHTML(stats.mood)}</strong>, stage <strong>${escapeHTML(stats.escalation)}/4</strong>.
         </p>
         <div class="modal-scoreboard-list">
-          <div><strong>✅ A — Most Frustrating (25 pts):</strong> 0ms mid-typing ragebait modals, 4-corner-hopping stalkers, shrinking errors (100%→26%), font-shrink punishment (15.5px→11px), dodging Autocorrect, save sabotage, 3-step exit trap.</div>
+          <div><strong>✅ A — Most Frustrating (25 pts):</strong> 0ms click-dodging Writing Violation modals, 4-corner stalkers, shrinking errors (100%→26%), font-shrink (15.5px→11px) &amp; Comic Sans crimes, dodging Autocorrect, 3-space Tab, forbidden shortcut heckler, Plagiarism Police, save sabotage, 3-step exit trap.</div>
           <div><strong>✅ B — Creative Use of AI (25 pts):</strong> Evaluates prose every ~30 words with mood + telemetry (WPM, Backspaces, Errors) via Gemini, OpenAI, or 0ms Offline Critic.</div>
-          <div><strong>✅ C — Funniest (25 pts):</strong> 6 moods (Intellectual fake citations, Sad rain, Angry scrambler, 10s Supportive), 15s ghostwriter, procedural Web Audio violin/stings, <code>i_remember.txt</code> grudge.</div>
-          <div><strong>✅ D — Most Pointless, Yet Brilliant (25 pts):</strong> Real text editor (.txt open/save, line numbers, WPM sparkline, pixel-synced wavy backdrop) engineered to hate your note-taking.</div>
+          <div><strong>✅ C — Funniest (25 pts):</strong> 6 moods (Intellectual fake citations, Sad rain, Angry scrambler, 10s Supportive), 15s ghostwriter, Yappy paperclip, Tab-Switch Jealousy, Free Trial nag, 17 procedural Web Audio cues, <code>i_remember.txt</code> grudge.</div>
+          <div><strong>✅ D — Most Pointless, Yet Brilliant (25 pts):</strong> Real text editor (.txt open/save, line numbers, WPM sparkline, pixel-synced wavy backdrop, shake-to-refill virtual toner cartridge, filename despair drift) engineered to hate your note-taking.</div>
         </div>
       `,
       buttons: [{ id: 'scoreboard-close', label: 'Back to Suffering', primary: true }]
