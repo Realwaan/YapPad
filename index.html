@@ -122,6 +122,9 @@
             <button id="menu-demo-scramble" type="button" class="menu-item" data-action="demo-scramble">
               <span>Trigger Angry Word Scramble</span><span class="menu-shortcut">😡</span>
             </button>
+            <button id="menu-demo-save-delete" type="button" class="menu-item" data-action="demo-save-delete">
+              <span>Save Sabotage: Delete Notes Instead</span><span class="menu-shortcut">🔥</span>
+            </button>
             <button id="menu-demo-save-rate" type="button" class="menu-item" data-action="demo-save-rate">
               <span>Save Sabotage: Rate /10</span><span class="menu-shortcut">💾</span>
             </button>
@@ -135,6 +138,9 @@
               <span>Trigger 15s Ghost-Writing</span><span class="menu-shortcut">👻</span>
             </button>
             <div class="menu-divider"></div>
+            <button id="menu-demo-error-lock" type="button" class="menu-item is-active" data-action="demo-error-lock">
+              <span id="menu-demo-error-lock-label">Fix-Before-Typing Lock: On</span><span class="menu-shortcut">🔒</span>
+            </button>
             <button id="menu-demo-low-toner" type="button" class="menu-item" data-action="demo-low-toner">
               <span>Drop Virtual Toner (Low Ink)</span><span class="menu-shortcut">🖨️</span>
             </button>
@@ -224,6 +230,16 @@
         </span>
         <button id="btn-trial-dignity" type="button" class="trial-nag-btn">
           Pay With Dignity
+        </button>
+      </div>
+
+      <!-- Fix-Before-Typing Error Lockout Banner -->
+      <div id="error-lock-banner" class="error-lock-banner" role="status" aria-live="polite" hidden>
+        <span id="error-lock-text" class="error-lock-text">
+          🔒 Typing locked: fix your mistake before typing anything else.
+        </span>
+        <button id="btn-jump-error" type="button" class="error-lock-btn">
+          🎯 Highlight Error
         </button>
       </div>
 

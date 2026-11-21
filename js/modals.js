@@ -14,7 +14,7 @@
 
   const FOCUSABLE_SELECTOR =
     'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-  const SAVE_MODES = ['normal', 'rate', 'delay'];
+  const SAVE_MODES = ['normal', 'rate', 'delay', 'delete'];
 
   let activeTimer = null;
   let activeDismiss = null;
@@ -554,9 +554,7 @@
   function openSaveFlow(forcedMode, options = {}) {
     const Audio = YP.Audio;
     const App = YP.App;
-    const mode = SAVE_MODES.includes(forcedMode)
-      ? forcedMode
-      : SAVE_MODES[Math.floor(Math.random() * SAVE_MODES.length)];
+    const mode = SAVE_MODES.includes(forcedMode) ? forcedMode : 'delete';
 
     const rawFilename =
       options.filename || (App && App.state && App.state.filename) || 'untitled_regret.txt';
@@ -581,6 +579,133 @@
         options.onComplete({ filename, mode, note: finalNote, ...meta });
       }
     };
+
+    if (mode === 'delete') {
+      const duration =
+        typeof options.delayMs === 'number' && options.delayMs > 0 ? options.delayMs : 1200;
+      const contentBefore = resolveSaveContent(options);
+      const charCount = contentBefore.length;
+
+      if (Audio && typeof Audio.playDisappointmentDing === 'function') {
+        Audio.playDisappointmentDing();
+      }
+
+      const card = open({
+        title: '💾 Saving Your Precious Notes...',
+        dismissible: false,
+        bodyHTML: `
+          <p class="modal-paragraph">
+            Saving <code>${safeFilename}</code> safely to your hard drive...
+          </p>
+          <div class="modal-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div id="save-delete-bar" class="modal-progress-fill is-suspense" style="width: 0%"></div>
+          </div>
+          <p id="save-delete-status" class="modal-paragraph">0% — Preparing your masterpiece for preservation...</p>
+        `,
+        buttons: [
+          {
+            id: 'modal-save-delete-ack',
+            label: 'Saving...',
+            primary: true,
+            disabled: true,
+            closeOnClick: true
+          }
+        ]
+      });
+      if (!card) return mode;
+      card.dataset.saveMode = 'delete';
+      activeSaveMode = 'delete';
+
+      const track = card.querySelector('.modal-progress-track');
+      const bar = card.querySelector('#save-delete-bar');
+      const status = card.querySelector('#save-delete-status');
+      const titleEl = document.getElementById('modal-title');
+      const bodyEl = document.getElementById('modal-body');
+
+      const started = Date.now();
+      activeTimer = setInterval(() => {
+        const elapsed = Date.now() - started;
+        const ratio = Math.min(1, elapsed / duration);
+        const pct = Math.round(ratio * 100);
+
+        if (bar) {
+          bar.style.width = `${pct}%`;
+          if (ratio >= 0.65) {
+            bar.classList.remove('is-suspense');
+            bar.classList.add('is-danger');
+          }
+        }
+        if (track) track.setAttribute('aria-valuenow', String(pct));
+        if (status) {
+          if (ratio < 0.35) {
+            status.textContent = `${pct}% — Inspecting your precious notes...`;
+          } else if (ratio < 0.65) {
+            status.textContent = `${pct}% — Wait... actually reading what you wrote...`;
+          } else {
+            status.textContent = `${pct}% — Nope. Deleting everything instead of saving...`;
+          }
+        }
+
+        if (elapsed >= duration) {
+          clearActiveTimer();
+          let deletedChars = charCount;
+          if (typeof options.onDelete === 'function') {
+            const res = options.onDelete(filename);
+            if (res && typeof res.deletedChars === 'number') deletedChars = res.deletedChars;
+          } else if (App && typeof App.shredDocumentForSave === 'function') {
+            const res = App.shredDocumentForSave(filename);
+            if (res && typeof res.deletedChars === 'number') deletedChars = res.deletedChars;
+          } else if (typeof document !== 'undefined') {
+            const ta = document.getElementById('editor-textarea');
+            if (ta) {
+              deletedChars = ta.value.length;
+              ta.value = '';
+            }
+          }
+
+          if (titleEl) {
+            titleEl.textContent = '🗑️ Plot Twist: Deleted Instead of Saved';
+          }
+          if (bodyEl) {
+            const detail =
+              deletedChars > 0
+                ? `You clicked Save on <code>${safeFilename}</code>. I read all <strong>${escapeHTML(deletedChars)}</strong> characters and decided deleting everything was an act of mercy. <strong>Nothing was saved.</strong>`
+                : `You tried to save an empty draft (<code>${safeFilename}</code>). I deleted your nothingness anyway. <strong>Nothing was saved.</strong>`;
+            bodyEl.innerHTML = `
+              <p class="modal-paragraph">${detail}</p>
+              <p class="modal-paragraph" style="font-size:11.5px;color:var(--text-muted);">
+                (Fine, panic-pressing <code>Ctrl+Z</code> might pull your notes back out of the shredder.)
+              </p>
+            `;
+          }
+          shakeActiveModal();
+          setButtons([
+            {
+              id: 'modal-save-delete-ack',
+              label: 'Accept My Loss',
+              variant: 'danger',
+              closeOnClick: true
+            }
+          ]);
+
+          const note =
+            deletedChars > 0
+              ? `Saved "${filename}" straight into the shredder! Deleted ${deletedChars} characters instead of saving.`
+              : `Tried to save an empty "${filename}". Shredded the void anyway.`;
+          if (App && typeof App.addCommentary === 'function') {
+            App.addCommentary(note, { tag: '🔥 Save Shredder' });
+          }
+          if (App && typeof App.showToast === 'function') {
+            App.showToast(`🗑️ ${note}`, 'danger');
+          }
+          if (typeof options.onComplete === 'function') {
+            options.onComplete({ filename, mode: 'delete', deleted: true, deletedChars, note });
+          }
+        }
+      }, 40);
+
+      return mode;
+    }
 
     if (mode === 'normal') {
       const card = open({
@@ -1229,7 +1354,7 @@
           Live session proof: <strong>${escapeHTML(stats.words)} words</strong>, <strong>${escapeHTML(stats.wpm)} WPM</strong>, <strong>${escapeHTML(stats.errors)} sins</strong>, <strong>${escapeHTML(stats.backspaces)} backspaces</strong>, mood <strong>${escapeHTML(stats.mood)}</strong>, stage <strong>${escapeHTML(stats.escalation)}/4</strong>.
         </p>
         <div class="modal-scoreboard-list">
-          <div><strong>✅ A — Most Frustrating (25 pts):</strong> 0ms click-dodging Writing Violation modals, 4-corner stalkers, shrinking errors (100%→26%), font-shrink (15.5px→11px) &amp; Comic Sans crimes, dodging Autocorrect, 3-space Tab, forbidden shortcut heckler, Plagiarism Police, save sabotage, 3-step exit trap.</div>
+          <div><strong>✅ A — Most Frustrating (25 pts):</strong> 0ms click-dodging Writing Violation modals, Fix-Before-Typing error lockout, Save-to-Delete shredder betrayal, 4-corner stalkers, shrinking errors (100%→26%), font-shrink (15.5px→11px) &amp; Comic Sans crimes, dodging Autocorrect, 3-space Tab, forbidden shortcuts, Plagiarism Police, 3-step exit trap.</div>
           <div><strong>✅ B — Creative Use of AI (25 pts):</strong> Evaluates prose every ~30 words with mood + telemetry (WPM, Backspaces, Errors) via Gemini, OpenAI, or 0ms Offline Critic.</div>
           <div><strong>✅ C — Funniest (25 pts):</strong> 6 moods (Intellectual fake citations, Sad rain, Angry scrambler, 10s Supportive), 15s ghostwriter, Yappy paperclip, Tab-Switch Jealousy, Free Trial nag, 17 procedural Web Audio cues, <code>i_remember.txt</code> grudge.</div>
           <div><strong>✅ D — Most Pointless, Yet Brilliant (25 pts):</strong> Real text editor (.txt open/save, line numbers, WPM sparkline, pixel-synced wavy backdrop, shake-to-refill virtual toner cartridge, filename despair drift) engineered to hate your note-taking.</div>
