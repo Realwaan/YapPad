@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="YapPad — A zero-dependency web text editor that judges everything you type in real time and escalates into full ragebait chaos." />
   <title>YapPad — The Notepad That Judges Everything You Type</title>
+  <link
+    rel="icon"
+    type="image/svg+xml"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2342546a'/%3E%3Ccircle cx='11.5' cy='13' r='2' fill='%23fcfbf7'/%3E%3Ccircle cx='20.5' cy='13' r='2' fill='%23fcfbf7'/%3E%3Cpath d='M9.5 9.5 L14 10.8 M22.5 9.5 L18 10.8 M10.5 21.5 Q16 19.5 21.5 21.5' stroke='%23fcfbf7' stroke-width='2' stroke-linecap='round' fill='none'/%3E%3C/svg%3E"
+  />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body data-mood="passive-aggressive" data-escalation="0">
@@ -209,10 +214,24 @@
         <!-- Commentary Panel (Margin Notes) -->
         <aside id="commentary-panel" aria-label="Margin Notes Commentary">
           <div class="panel-header">
-            <span class="panel-title">Margin Notes (<span id="commentary-count">1</span>)</span>
-            <button id="btn-clear-notes" type="button" class="panel-clear-btn">Clear</button>
+            <div class="panel-title-wrap">
+              <h2 class="panel-title">Margin Notes</h2>
+              <span id="commentary-count" class="panel-badge" aria-label="Visible note count">0</span>
+            </div>
+            <button
+              id="btn-clear-notes"
+              type="button"
+              class="panel-clear-btn"
+              title="Attempt to clear the margin notes"
+            >Clear Notes</button>
           </div>
-          <div id="commentary-list" class="commentary-list"></div>
+          <div
+            id="commentary-list"
+            class="commentary-list"
+            role="log"
+            aria-live="polite"
+            aria-relevant="additions"
+          ></div>
         </aside>
       </div>
 
@@ -245,10 +264,19 @@
       <div id="ragebait-layer" aria-live="polite"></div>
 
       <!-- Non-blocking Toast Stack -->
-      <div id="toast-stack" aria-live="polite"></div>
+      <div id="toast-stack" role="region" aria-label="Notifications" aria-live="polite" aria-atomic="false"></div>
 
       <!-- Blocking Modal Overlay -->
-      <div id="modal-overlay" hidden></div>
+      <div id="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-hidden="true" hidden>
+        <div id="modal-card" class="modal-card" tabindex="-1">
+          <div class="modal-header">
+            <h2 id="modal-title" class="modal-title">YapPad</h2>
+            <button type="button" id="modal-close" class="modal-close-btn" aria-label="Close dialog">✕</button>
+          </div>
+          <div id="modal-body" class="modal-body"></div>
+          <div id="modal-actions" class="modal-actions"></div>
+        </div>
+      </div>
     </main>
 
     <!-- Abandoned Desktop Screen (shown after 3-step exit) -->
