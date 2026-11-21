@@ -1,0 +1,4 @@
+pyspellchecker
+pygame
+google-genai
+python-dotenv
