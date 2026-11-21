@@ -1,157 +1,287 @@
-/**
- * YapPad Ragebait overlay engine (Ticket 05 implements center ragebait intervention
- * for every 5th Backspace; Ticket 12 expands with corner stalkers and shrinking cards).
- * Attached to window.YP (aliased as window.SN) for classic script & file:// support.
- */
-(function (global) {
-  "use strict";
+(function () {
+  const root = typeof window !== 'undefined' ? window : globalThis;
+  root.YP = root.YP || {};
+  root.SN = root.YP;
 
-  const YP = (global.YP = global.YP || global.SN || {});
-  global.SN = YP;
+  const CORNERS = ['top-left', 'top-right', 'bottom-right', 'bottom-left'];
+  const SHRINK_STEPS = [1.0, 0.84, 0.70, 0.56, 0.44, 0.34, 0.26];
 
-  const noop = function () {};
-  let activeCenterEl = null;
+  let mistakeTotal = 0;
+  let centerCardEl = null;
+  const cornerStalkers = [];
+  const shrinkingCards = [];
 
   function getLayer() {
-    if (typeof document === "undefined") return null;
-    return document.getElementById("ragebait-layer");
+    if (typeof document === 'undefined') return null;
+    return document.getElementById('ragebait-layer');
   }
 
-  function dismissCenterRagebait() {
-    if (activeCenterEl && activeCenterEl.parentNode) {
-      activeCenterEl.parentNode.removeChild(activeCenterEl);
+  function escapeHTML(str) {
+    const Grammar = root.YP.Grammar;
+    if (Grammar && typeof Grammar.escapeHTML === 'function') {
+      return Grammar.escapeHTML(str);
     }
-    activeCenterEl = null;
-    if (typeof document !== "undefined") {
-      const ta = document.getElementById("editor-textarea");
-      if (ta && typeof ta.focus === "function") {
-        ta.focus();
-      }
-    }
+    return String(str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
   }
 
-  /**
-   * Show a dead-center ragebait intervention popup inside #ragebait-layer.
-   * Plays playRageBuzzer(), features a runaway helper button and a once-dodging close X.
-   */
-  function showCenterRagebait(issue) {
+  function showCenterRagebait(issue = {}) {
     const layer = getLayer();
+    const Audio = root.YP.Audio;
+    if (Audio) Audio.playRageBuzzer();
+
+    mistakeTotal += 1;
     if (!layer) return null;
 
-    if (YP.Audio && typeof YP.Audio.playRageBuzzer === "function") {
-      YP.Audio.playRageBuzzer();
+    if (centerCardEl && centerCardEl.parentNode) {
+      centerCardEl.remove();
+      centerCardEl = null;
     }
 
-    dismissCenterRagebait();
+    const token = escapeHTML(issue.token || 'keystroke');
+    const msg = escapeHTML(
+      issue.message || `Seriously? "${issue.token || 'That'}" is what you decided to type?`
+    );
 
-    const info = issue || {};
-    const title = info.title || "🚨 BACKSPACE INTERVENTION";
-    const countLabel =
-      typeof info.count === "number"
-        ? "Deletion #" + info.count
-        : info.badge || "Self-Doubt Detected";
-    const message =
-      info.message ||
-      "Deleting again? This is becoming a pattern. Maybe commit to a sentence for once.";
-    const dismissLabel = info.dismissLabel || "I admit I'm indecisive";
-    const dodgeLabel = info.dodgeLabel || "✨ Fix My Confidence";
+    const card = document.createElement('div');
+    card.className = 'center-ragebait-card';
+    card.innerHTML = `
+      <div class="ragebait-header">
+        <span class="ragebait-title">🚨 WRITING VIOLATION #${mistakeTotal}: "${token}"</span>
+        <button type="button" class="ragebait-close-x" title="Close">✕</button>
+      </div>
+      <div class="ragebait-body">${msg}</div>
+      <div class="ragebait-actions">
+        <button type="button" class="ragebait-btn ragebait-fix-btn">✨ Fix It For Me</button>
+        <button type="button" class="ragebait-btn ragebait-btn-primary ragebait-dismiss-btn">
+          I Accept My Mediocrity
+        </button>
+      </div>
+    `;
 
-    const card = document.createElement("div");
-    card.id = "ragebait-center-popup";
-    card.className = "ragebait-center-card";
-    card.setAttribute("role", "alertdialog");
-    card.setAttribute("aria-label", title);
+    const closeX = card.querySelector('.ragebait-close-x');
+    const fixBtn = card.querySelector('.ragebait-fix-btn');
+    const dismissBtn = card.querySelector('.ragebait-dismiss-btn');
 
-    const header = document.createElement("div");
-    header.className = "ragebait-center-header";
-
-    const titleEl = document.createElement("span");
-    titleEl.className = "ragebait-center-title";
-    titleEl.textContent = title;
-
-    const closeBtn = document.createElement("button");
-    closeBtn.type = "button";
-    closeBtn.className = "ragebait-close-btn";
-    closeBtn.setAttribute("aria-label", "Dismiss intervention");
-    closeBtn.textContent = "✕";
-
-    let closeDodged = false;
-    closeBtn.addEventListener("mouseenter", function () {
-      if (closeDodged) return;
-      closeDodged = true;
-      closeBtn.style.transform = "translateX(-28px)";
+    let xDodged = false;
+    closeX.addEventListener('mouseenter', () => {
+      if (!xDodged) {
+        xDodged = true;
+        closeX.style.transform = 'translateX(-28px)';
+        if (Audio) Audio.playCornerZip();
+      }
     });
-    closeBtn.addEventListener("click", dismissCenterRagebait);
+    closeX.addEventListener('click', () => {
+      card.remove();
+      if (centerCardEl === card) centerCardEl = null;
+    });
 
-    header.appendChild(titleEl);
-    header.appendChild(closeBtn);
-
-    const body = document.createElement("div");
-    body.className = "ragebait-center-body";
-
-    const badge = document.createElement("span");
-    badge.className = "ragebait-count-badge";
-    badge.textContent = countLabel;
-
-    const msgEl = document.createElement("p");
-    msgEl.className = "ragebait-center-message";
-    msgEl.textContent = message;
-
-    body.appendChild(badge);
-    body.appendChild(msgEl);
-
-    const actions = document.createElement("div");
-    actions.className = "ragebait-center-actions";
-
-    const runawayBtn = document.createElement("button");
-    runawayBtn.type = "button";
-    runawayBtn.className = "ragebait-btn ragebait-btn-runaway";
-    runawayBtn.textContent = dodgeLabel;
-
-    let runawaySide = 1;
-    const dodgeRunaway = function () {
-      runawaySide = -runawaySide;
-      runawayBtn.style.transform = "translateX(" + runawaySide * 46 + "px)";
+    let fixFlip = -1;
+    const dodgeFix = () => {
+      fixFlip = fixFlip === 1 ? -1 : 1;
+      fixBtn.style.transform = `translateX(${-46 * fixFlip}px)`;
+      fixBtn.textContent = '✨ Nope, Learn Yourself';
+      if (Audio) Audio.playCornerZip();
     };
-    runawayBtn.addEventListener("mouseenter", dodgeRunaway);
-    runawayBtn.addEventListener("click", function (event) {
-      event.preventDefault();
-      dodgeRunaway();
+    fixBtn.addEventListener('mouseenter', dodgeFix);
+    fixBtn.addEventListener('click', dodgeFix);
+
+    dismissBtn.addEventListener('click', () => {
+      card.remove();
+      if (centerCardEl === card) centerCardEl = null;
     });
-
-    const dismissBtn = document.createElement("button");
-    dismissBtn.type = "button";
-    dismissBtn.className = "ragebait-btn ragebait-btn-dismiss";
-    dismissBtn.textContent = dismissLabel;
-    dismissBtn.addEventListener("click", dismissCenterRagebait);
-
-    actions.appendChild(runawayBtn);
-    actions.appendChild(dismissBtn);
-
-    card.appendChild(header);
-    card.appendChild(body);
-    card.appendChild(actions);
 
     layer.appendChild(card);
-    activeCenterEl = card;
+    centerCardEl = card;
     return card;
   }
 
-  function clearAll() {
-    dismissCenterRagebait();
+  function spawnCornerStalker(issue = {}) {
     const layer = getLayer();
-    if (layer) layer.innerHTML = "";
+    const Audio = root.YP.Audio;
+    if (!layer) return null;
+
+    while (cornerStalkers.length >= 2) {
+      const oldest = cornerStalkers.shift();
+      if (oldest) {
+        clearInterval(oldest.timer);
+        if (oldest.el && oldest.el.parentNode) oldest.el.remove();
+      }
+    }
+
+    let cornerIndex = cornerStalkers.length % CORNERS.length;
+    let dodgesLeft = 3;
+
+    const card = document.createElement('div');
+    card.className = 'corner-stalker-card';
+    card.setAttribute('data-corner', CORNERS[cornerIndex]);
+    card.setAttribute('data-dodges-left', String(dodgesLeft));
+
+    const token = escapeHTML(issue.token || 'syntax');
+    const msg = escapeHTML(issue.message || `I'm going to hop corners until you fix "${issue.token || 'that'}".`);
+
+    card.innerHTML = `
+      <div class="ragebait-header">
+        <span class="ragebait-title">👀 Corner Stalker: "${token}"</span>
+        <button type="button" class="ragebait-close-x" title="Try to close (${dodgesLeft} dodges left)">✕</button>
+      </div>
+      <div class="ragebait-body" style="margin-bottom:0;font-size:11.5px;">${msg}</div>
+    `;
+
+    const hopCorner = () => {
+      cornerIndex = (cornerIndex + 1) % CORNERS.length;
+      card.setAttribute('data-corner', CORNERS[cornerIndex]);
+      if (Audio) Audio.playCornerZip();
+    };
+
+    const timer = setInterval(hopCorner, 1650);
+    const entry = { el: card, timer };
+    cornerStalkers.push(entry);
+
+    const closeBtn = card.querySelector('.ragebait-close-x');
+    closeBtn.addEventListener('mouseenter', () => {
+      if (dodgesLeft > 0) {
+        dodgesLeft -= 1;
+        card.setAttribute('data-dodges-left', String(dodgesLeft));
+        closeBtn.title = dodgesLeft > 0 ? `Too slow! (${dodgesLeft} dodges left)` : 'Fine, click me';
+        hopCorner();
+      }
+    });
+
+    closeBtn.addEventListener('click', () => {
+      if (dodgesLeft > 0) {
+        dodgesLeft -= 1;
+        card.setAttribute('data-dodges-left', String(dodgesLeft));
+        hopCorner();
+        return;
+      }
+      clearInterval(timer);
+      card.remove();
+      const idx = cornerStalkers.indexOf(entry);
+      if (idx !== -1) cornerStalkers.splice(idx, 1);
+    });
+
+    layer.appendChild(card);
+    return card;
   }
 
-  YP.Ragebait = {
-    onMistake: function (issue) {
-      return showCenterRagebait(issue);
-    },
-    showCenterRagebait: showCenterRagebait,
-    dismissCenterRagebait: dismissCenterRagebait,
-    spawnCornerStalker: noop,
-    spawnShrinkingError: noop,
-    unleashAll: noop,
-    clearAll: clearAll,
+  function spawnShrinkingError(issue = {}) {
+    const layer = getLayer();
+    const Audio = root.YP.Audio;
+    if (!layer) return null;
+
+    while (shrinkingCards.length >= 3) {
+      const oldest = shrinkingCards.shift();
+      if (oldest) {
+        clearTimeout(oldest.initialTimer);
+        clearInterval(oldest.intervalTimer);
+        if (oldest.el && oldest.el.parentNode) oldest.el.remove();
+      }
+    }
+
+    let stepIndex = 0;
+    const card = document.createElement('div');
+    card.className = 'shrinking-error-card';
+
+    const slot = shrinkingCards.length;
+    card.style.top = `${128 + slot * 78}px`;
+    card.style.right = `${285 + (slot % 2) * 34}px`;
+    card.style.transform = `scale(${SHRINK_STEPS[0]})`;
+    card.setAttribute('data-scale', String(SHRINK_STEPS[0]));
+
+    const token = escapeHTML(issue.token || 'typo');
+    card.innerHTML = `
+      <div class="ragebait-header" style="margin-bottom:4px;padding-bottom:4px;">
+        <span class="ragebait-title" style="font-size:11.5px;">🔍 Shrinking Sin (<span class="shrink-pct">100%</span>)</span>
+        <button type="button" class="ragebait-close-x" style="width:20px;height:20px;font-size:11px;">✕</button>
+      </div>
+      <div style="font-size:11px;line-height:1.35;">"${token}" is still wrong, just smaller.</div>
+    `;
+
+    const pctEl = card.querySelector('.shrink-pct');
+    let intervalTimer = null;
+    const stepShrink = () => {
+      if (stepIndex < SHRINK_STEPS.length - 1) {
+        stepIndex += 1;
+        const scale = SHRINK_STEPS[stepIndex];
+        card.style.transform = `scale(${scale})`;
+        card.setAttribute('data-scale', String(scale));
+        if (pctEl) pctEl.textContent = `${Math.round(scale * 100)}%`;
+        if (Audio) Audio.playShrinkSqueak();
+        if (stepIndex >= SHRINK_STEPS.length - 1 && intervalTimer !== null) {
+          clearInterval(intervalTimer);
+          intervalTimer = null;
+        }
+      }
+    };
+
+    const initialTimer = setTimeout(stepShrink, 550);
+    intervalTimer = setInterval(stepShrink, 1350);
+    const entry = { el: card, initialTimer, intervalTimer };
+    shrinkingCards.push(entry);
+
+    card.addEventListener('mouseenter', stepShrink);
+    card.querySelector('.ragebait-close-x').addEventListener('click', () => {
+      clearTimeout(initialTimer);
+      if (intervalTimer !== null) {
+        clearInterval(intervalTimer);
+        intervalTimer = null;
+      }
+      card.remove();
+      const idx = shrinkingCards.indexOf(entry);
+      if (idx !== -1) shrinkingCards.splice(idx, 1);
+    });
+
+    layer.appendChild(card);
+    return card;
+  }
+
+  function onMistake(issue = {}) {
+    showCenterRagebait(issue);
+    spawnCornerStalker(issue);
+    spawnShrinkingError(issue);
+  }
+
+  function unleashAll(issues = []) {
+    const sample = issues[0] || {
+      token: 'teh',
+      message: '"teh" is not a word. I checked. Twice.'
+    };
+    showCenterRagebait(sample);
+    spawnCornerStalker(issues[1] || sample);
+    spawnShrinkingError(issues[2] || sample);
+  }
+
+  function clearAll() {
+    if (centerCardEl && centerCardEl.parentNode) {
+      centerCardEl.remove();
+    }
+    centerCardEl = null;
+
+    while (cornerStalkers.length > 0) {
+      const item = cornerStalkers.pop();
+      clearInterval(item.timer);
+      if (item.el && item.el.parentNode) item.el.remove();
+    }
+
+    while (shrinkingCards.length > 0) {
+      const item = shrinkingCards.pop();
+      clearTimeout(item.initialTimer);
+      clearInterval(item.intervalTimer);
+      if (item.el && item.el.parentNode) item.el.remove();
+    }
+  }
+
+  root.YP.Ragebait = {
+    SHRINK_STEPS,
+    CORNERS,
+    showCenterRagebait,
+    spawnCornerStalker,
+    spawnShrinkingError,
+    onMistake,
+    unleashAll,
+    clearAll
   };
-})(typeof window !== "undefined" ? window : globalThis);
+})();
