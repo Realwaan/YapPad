@@ -112,7 +112,10 @@
     if (!list) return;
 
     const card = document.createElement('article');
-    card.className = 'commentary-card';
+    card.className = meta.variant === 'ai' ? 'commentary-card commentary-card-ai' : 'commentary-card';
+    if (meta.source) {
+      card.setAttribute('data-source', String(meta.source));
+    }
 
     const tag = meta.tag || moodInfo.name;
     const now = new Date();
@@ -408,8 +411,12 @@
     const cursorEl = el('cursor-pos');
     if (cursorEl) cursorEl.textContent = `Ln ${row}, Col ${col}`;
 
-    // Check ~30-word AI roast milestone
-    if (words >= state.lastRoastWordMilestone + 30) {
+    // Check ~30-word AI roast milestone (reset downward on large deletions or clear)
+    if (words === 0) {
+      state.lastRoastWordMilestone = 0;
+    } else if (words <= state.lastRoastWordMilestone - 15) {
+      state.lastRoastWordMilestone = Math.floor(words / 30) * 30;
+    } else if (words >= 30 && words >= state.lastRoastWordMilestone + 30) {
       state.lastRoastWordMilestone = Math.floor(words / 30) * 30;
       triggerAIRoast(false);
     }
@@ -477,24 +484,64 @@
   }
 
   async function triggerAIRoast(manual = false) {
-    if (state.roastInFlight) return;
+    if (state.roastInFlight) return null;
     const AI = root.YP.AI;
     const Audio = root.YP.Audio;
     const textarea = el('editor-textarea');
-    if (!AI || !textarea) return;
+    if (!AI || !textarea) return null;
+
+    const cfg = typeof AI.getConfig === 'function' ? AI.getConfig() : null;
+    const usingCloud = Boolean(
+      cfg && (cfg.provider === 'gemini' || cfg.provider === 'openai') && cfg.apiKey
+    );
+    const telemetry = getTelemetry();
+    if (manual) {
+      state.lastRoastWordMilestone = state.words;
+    }
+
+    if (usingCloud) {
+      setStatusMessage('AI Brain is evaluating your draft...');
+    }
 
     state.roastInFlight = true;
     try {
-      const result = await AI.roast(textarea.value, state.mood, getTelemetry());
-      if (Audio) Audio.playRoastPop();
+      const roastFn = typeof AI.roast === 'function' ? AI.roast : AI.requestRoast;
+      let result;
+      try {
+        result = await roastFn(textarea.value, state.mood, telemetry);
+      } catch (err) {
+        const offlineText = typeof AI.generateOfflineRoast === 'function'
+          ? AI.generateOfflineRoast(textarea.value, state.mood, telemetry)
+          : 'Interesting choice of words. Bold. Wrong, but bold.';
+        result = {
+          text: offlineText,
+          provider: 'offline',
+          fallback: true,
+          error: (err && err.message) || 'AI request failed'
+        };
+      }
+
+      const roastText = typeof result === 'string' ? result : (result && result.text) || '';
+      if (!roastText) return result;
+
+      if (Audio && typeof Audio.playRoastPop === 'function') {
+        Audio.playRoastPop();
+      }
       const tag =
-        result.provider === 'gemini'
-          ? '🧠 Gemini Roast'
-          : result.provider === 'openai'
-          ? '🧠 OpenAI Roast'
-          : '🧠 AI Critic';
-      addCommentary(result.text, { tag });
-      if (manual) showToast(result.text);
+        result && result.provider === 'gemini'
+          ? '🧠 AI Judgment · Gemini'
+          : result && result.provider === 'openai'
+          ? '🧠 AI Judgment · OpenAI'
+          : result && result.fallback
+          ? '🧠 AI Judgment · Offline Fallback'
+          : '🧠 AI Judgment · Offline';
+      addCommentary(roastText, {
+        tag,
+        variant: 'ai',
+        source: (result && result.provider) || 'offline'
+      });
+      if (manual) showToast(roastText);
+      return result;
     } finally {
       state.roastInFlight = false;
     }
@@ -626,9 +673,9 @@
     if (!badge) return;
     const label =
       cfg.provider === 'gemini'
-        ? 'AI: Gemini 2.5'
+        ? `AI: ${cfg.geminiModel || 'gemini-2.5-flash'}`
         : cfg.provider === 'openai'
-        ? 'AI: GPT-4o-mini'
+        ? `AI: ${cfg.openaiModel || 'gpt-4o-mini'}`
         : 'AI: Offline Critic';
     badge.textContent = label;
   }
@@ -957,6 +1004,20 @@
     // Global keyboard shortcuts
     if (typeof window !== 'undefined') {
       window.addEventListener('keydown', (e) => {
+        const overlay = el('modal-overlay');
+        const modalOpen = Boolean(overlay && !overlay.hidden);
+
+        if (e.key === 'Escape') {
+          if (modalOpen && root.YP.Modals && typeof root.YP.Modals.closeModal === 'function') {
+            root.YP.Modals.closeModal();
+          } else if (root.YP.Ragebait) {
+            root.YP.Ragebait.clearAll();
+          }
+          return;
+        }
+
+        if (modalOpen) return;
+
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
           e.preventDefault();
           handleAction('file-save');
@@ -972,8 +1033,6 @@
         } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && state.undoSnapshot !== null) {
           e.preventDefault();
           handleAction('edit-undo');
-        } else if (e.key === 'Escape') {
-          if (root.YP.Ragebait) root.YP.Ragebait.clearAll();
         }
       });
 
@@ -1049,6 +1108,7 @@
     applyFontShrinkPunishment,
     restoreNormalFont,
     insertRoastableSampleText,
+    triggerAIRoast,
     triggerAngryWordScramble,
     startGhostwriting,
     stopGhostwriting,
