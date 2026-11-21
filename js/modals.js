@@ -267,7 +267,10 @@
         card.querySelector('#exit-stay').addEventListener('click', closeModal);
         card.querySelector('#exit-next').addEventListener('click', () => renderStep(3));
       } else {
-        if (Audio) Audio.playOrchestralSting();
+        if (Audio) {
+          Audio.playSadViolin();
+          Audio.playOrchestralSting();
+        }
         const card = showModalHTML(`
           <h3 class="modal-title">👁️ Step 3 of 3: YapPad Will Remember This.</h3>
           <p class="modal-body">
@@ -285,7 +288,8 @@
           let closeCount = 1;
           try {
             if (typeof localStorage !== 'undefined') {
-              const prev = Number(localStorage.getItem('sn_close_count') || localStorage.getItem('yp_close_count') || 0);
+              const rawPrev = Number(localStorage.getItem('yp_close_count') || localStorage.getItem('sn_close_count') || 0);
+              const prev = Number.isFinite(rawPrev) && rawPrev > 0 ? rawPrev : 0;
               closeCount = prev + 1;
               localStorage.setItem('sn_remembers_close', 'true');
               localStorage.setItem('yp_remembers_close', 'true');
