@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
-const ROOT_DIR = path.resolve(path.dirname(__filename));
+const ROOT_DIR = fs.realpathSync(path.resolve(path.dirname(__filename)));
 const PORT = Number(process.env.PORT) || 3456;
 const HOST = process.env.HOST || '127.0.0.1';
 
@@ -20,10 +20,34 @@ const MIME_TYPES = {
   '.png': 'image/png'
 };
 
+function hasUnsafePath(str) {
+  return (
+    str.includes('\0') ||
+    str.includes('\\') ||
+    /(^|\/)\.\.(\/|$)/.test(str)
+  );
+}
+
 export function createServer() {
   return http.createServer((req, res) => {
     try {
       const rawUrl = req.url || '/';
+      const rawPath = rawUrl.split('?')[0].split('#')[0];
+
+      // Block raw path traversal (e.g. /../) BEFORE URL normalization can collapse it.
+      if (hasUnsafePath(rawPath)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('403 Forbidden');
+        return;
+      }
+
+      const decodedRaw = decodeURIComponent(rawPath);
+      if (hasUnsafePath(decodedRaw)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('403 Forbidden');
+        return;
+      }
+
       const parsedUrl = new URL(rawUrl, `http://${HOST}:${PORT}`);
       let pathname = decodeURIComponent(parsedUrl.pathname);
 
@@ -37,8 +61,9 @@ export function createServer() {
         pathname = '/index.html';
       }
 
-      // Guard against path traversal before and after normalization
-      if (pathname.includes('\0') || pathname.includes('..')) {
+      // Guard against dotfiles (e.g. /.env, /.git/config) and residual traversal
+      const segments = pathname.split('/').filter(Boolean);
+      if (hasUnsafePath(pathname) || segments.some((seg) => seg.startsWith('.'))) {
         res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
         res.end('403 Forbidden');
         return;
@@ -51,28 +76,43 @@ export function createServer() {
         return;
       }
 
-      fs.stat(candidatePath, (err, stats) => {
-        if (err || !stats.isFile()) {
+      fs.realpath(candidatePath, (realErr, realPath) => {
+        if (realErr) {
           res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
           res.end('404 Not Found');
           return;
         }
 
-        const ext = path.extname(candidatePath).toLowerCase();
-        const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-        res.writeHead(200, {
-          'Content-Type': contentType,
-          'Cache-Control': 'no-store'
-        });
+        if (realPath !== ROOT_DIR && !realPath.startsWith(ROOT_DIR + path.sep)) {
+          res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end('403 Forbidden');
+          return;
+        }
 
-        const stream = fs.createReadStream(candidatePath);
-        stream.on('error', () => {
-          if (!res.headersSent) {
-            res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+        fs.stat(realPath, (err, stats) => {
+          if (err || !stats.isFile()) {
+            res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+            res.end('404 Not Found');
+            return;
           }
-          res.end('500 Internal Server Error');
+
+          const ext = path.extname(realPath).toLowerCase();
+          const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+          res.writeHead(200, {
+            'Content-Type': contentType,
+            'X-Content-Type-Options': 'nosniff',
+            'Cache-Control': 'no-store'
+          });
+
+          const stream = fs.createReadStream(realPath);
+          stream.on('error', () => {
+            if (!res.headersSent) {
+              res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+            }
+            res.end('500 Internal Server Error');
+          });
+          stream.pipe(res);
         });
-        stream.pipe(res);
       });
     } catch {
       res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });

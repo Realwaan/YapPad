@@ -92,11 +92,15 @@
     'travel', 'treat', 'treatment', 'tree', 'trial', 'trip', 'trouble', 'true', 'truth', 'try', 'turn', 'tv',
     'two', 'type', 'typing', 'under', 'understand', 'unit', 'until', 'up', 'upon', 'us', 'use', 'usually', 'value',
     'various', 'very', 'victim', 'view', 'violence', 'visit', 'voice', 'vote', 'wait', 'waiting', 'walk', 'wall',
-    'want', 'war', 'watch', 'water', 'way', 'we', 'weapon', 'wear', 'week', 'weight', 'well', 'west', 'western',
+    'want', 'war', 'watch', 'water', 'way', 'we', 'weapon', 'wear', 'week', 'weight', 'welcome', 'well', 'west', 'western',
     'what', 'whatever', 'when', 'where', 'whether', 'which', 'while', 'white', 'who', 'whole', 'whom', 'whose',
     'why', 'wide', 'wife', 'will', 'win', 'wind', 'window', 'wish', 'with', 'within', 'without', 'woman', 'wonder',
     'word', 'words', 'work', 'worker', 'working', 'world', 'worry', 'would', 'write', 'writer', 'writing', 'wrong',
-    'xp', 'yappad', 'yard', 'yeah', 'year', 'yes', 'yet', 'you', 'young', 'your', 'yourself'
+    'xp', 'yappad', 'yard', 'yeah', 'year', 'yes', 'yet', 'you', 'young', 'your', 'yourself',
+    "aren't", "can't", "couldn't", "didn't", "doesn't", "don't", "hadn't", "hasn't", "haven't", "he's",
+    "here's", "i'd", "i'll", "i'm", "i've", "isn't", "it's", "let's", "she's", "shouldn't", "that's",
+    "there's", "they're", "they've", "wasn't", "we're", "we've", "weren't", "what's", "who's", "won't",
+    "wouldn't", "you'd", "you'll", "you're", "you've"
   ];
 
   const LEXICON = new Set(BASE_WORDS);
@@ -261,6 +265,20 @@
         end: m.index + m[0].length,
         suggestion: `; ${m[1]} ${m[2]}`,
         message: `Comma splice ("${m[0]}"). Two independent clauses duct-taped together. Disappointing.`
+      });
+    }
+
+    // 6b. Grammar Crime: "your welcome" -> "you're welcome"
+    const yourWelcomeRegex = /\byour\s+welcome\b/gi;
+    while ((m = yourWelcomeRegex.exec(src)) !== null) {
+      addIssue(issues, seenSpans, {
+        type: 'grammar',
+        rule: 'your-welcome',
+        token: m[0],
+        start: m.index,
+        end: m.index + m[0].length,
+        suggestion: "you're welcome",
+        message: `"${m[0]}"? Unless someone owns a welcome, you meant "you're welcome".`
       });
     }
 
