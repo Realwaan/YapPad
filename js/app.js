@@ -14,6 +14,25 @@
   const MAX_COMMENTARY_CARDS = 40;
   const MAX_TOASTS = 4;
 
+  const DELETION_CONFIG = {
+    GUILT_COOLDOWN_MS: 2200,
+    INTERVENTION_INTERVAL: 5,
+  };
+
+  const BACKSPACE_GUILT_LINES = [
+    "Are you sure? You worked so hard on that.",
+    "Deleting again? This is becoming a pattern.",
+    "Every Backspace breaks a tiny piece of my buffer.",
+    "That character had a family. You just erased it.",
+    "Second-guessing yourself already? Classic.",
+    "Why type anything if you're just going to take it back?",
+  ];
+
+  const deletionTracker = {
+    lastGuiltAt: -Infinity,
+    lineIdx: 0,
+  };
+
   const state = {
     filename: DEFAULT_FILENAME,
     dirty: false,
@@ -381,10 +400,137 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Backspace / Delete Guilt Trip & Mass-Delete Meltdown (Ticket 05)
+  // ---------------------------------------------------------------------------
+  function nextGuiltLine() {
+    const line = BACKSPACE_GUILT_LINES[deletionTracker.lineIdx % BACKSPACE_GUILT_LINES.length];
+    deletionTracker.lineIdx += 1;
+    return line;
+  }
+
+  function isWholeBufferSelected(textarea) {
+    if (!textarea) return false;
+    const len = textarea.value.length;
+    if (len <= 0) return false;
+    return textarea.selectionStart === 0 && textarea.selectionEnd === len;
+  }
+
+  function triggerMassDeleteMeltdown(options) {
+    const opts = options || {};
+    const deletedChars =
+      typeof opts.deletedChars === "number"
+        ? opts.deletedChars
+        : dom && dom.textarea
+          ? dom.textarea.value.length
+          : 0;
+    const source = opts.source || "mass-delete";
+
+    emit("mass-delete", {
+      deletedChars: deletedChars,
+      source: source,
+      backspaces: state.backspaces,
+    });
+
+    if (YP.Modals && typeof YP.Modals.openMeltdownModal === "function") {
+      return YP.Modals.openMeltdownModal({
+        deletedChars: deletedChars,
+        source: source,
+        durationMs: opts.durationMs,
+      });
+    }
+    return null;
+  }
+
+  function triggerBackspaceIntervention(count) {
+    const msg =
+      "Deleting again? That's " +
+      count +
+      " deletions—this is becoming a pattern. Commit to a word for once.";
+
+    addCommentary(msg, { tag: "🚨 Self-Doubt Alert" });
+    setStatus(msg);
+
+    emit("backspace-intervention", { count: count, message: msg });
+
+    if (YP.Ragebait && typeof YP.Ragebait.showCenterRagebait === "function") {
+      return YP.Ragebait.showCenterRagebait({
+        title: "🚨 BACKSPACE INTERVENTION",
+        count: count,
+        message: msg,
+        dodgeLabel: "✨ Restore Confidence",
+        dismissLabel: "I admit I'm indecisive",
+      });
+    }
+
+    if (YP.Modals && typeof YP.Modals.openBackspaceIntervention === "function") {
+      return YP.Modals.openBackspaceIntervention(count);
+    }
+    return null;
+  }
+
+  function handleDeletionKeydown(event, nowOverride) {
+    if (!event) return null;
+    if (event.key !== "Backspace" && event.key !== "Delete") return null;
+
+    const now = typeof nowOverride === "number" ? nowOverride : Date.now();
+    const isMassDelete = isWholeBufferSelected(dom && dom.textarea);
+    const deletedChars = dom && dom.textarea ? dom.textarea.value.length : 0;
+
+    setBackspaceCount(state.backspaces + 1);
+    const count = state.backspaces;
+
+    emit("backspace", {
+      count: count,
+      key: event.key,
+      isMassDelete: isMassDelete,
+      now: now,
+    });
+
+    // Mass delete (Ctrl+A + Backspace/Delete on non-empty buffer): let native
+    // deletion finish first, then launch the emotional meltdown modal.
+    if (isMassDelete) {
+      global.setTimeout(function () {
+        triggerMassDeleteMeltdown({
+          deletedChars: deletedChars,
+          source: "mass-delete",
+        });
+      }, 0);
+      return { type: "mass-delete", count: count };
+    }
+
+    // Every 5th Backspace/Delete pops the center ragebait intervention.
+    if (count % DELETION_CONFIG.INTERVENTION_INTERVAL === 0) {
+      deletionTracker.lastGuiltAt = now;
+      global.setTimeout(function () {
+        triggerBackspaceIntervention(count);
+      }, 0);
+      return { type: "intervention", count: count };
+    }
+
+    // Single deletion guilt trip (rate-limited so normal editing stays readable).
+    if (now - deletionTracker.lastGuiltAt >= DELETION_CONFIG.GUILT_COOLDOWN_MS) {
+      deletionTracker.lastGuiltAt = now;
+      const line = nextGuiltLine();
+      addCommentary(line, { tag: "🗑️ Deletion Guilt" });
+      showToast(line, "warning");
+      setStatus(line);
+      if (YP.Audio && typeof YP.Audio.playGuiltPop === "function") {
+        YP.Audio.playGuiltPop();
+      }
+      return { type: "guilt", count: count, line: line };
+    }
+
+    return { type: "counted", count: count };
+  }
+
+  // ---------------------------------------------------------------------------
   // File Operations: New (Alt+N), Open .txt (Ctrl+O), Save .txt (Ctrl+S)
   // ---------------------------------------------------------------------------
   function newDocument() {
     if (!dom || !dom.textarea) return;
+    if (YP.Ragebait && typeof YP.Ragebait.clearAll === "function") {
+      YP.Ragebait.clearAll();
+    }
     dom.textarea.value = "";
     state.issues = [];
     state.seenIssueKeys.clear();
@@ -579,11 +725,10 @@
         saveDocument("delay");
         break;
       case "demo-meltdown":
-        if (YP.Modals && typeof YP.Modals.openMeltdownModal === "function") {
-          YP.Modals.openMeltdownModal();
-        } else {
-          emit("demo-meltdown", {});
-        }
+        triggerMassDeleteMeltdown({
+          deletedChars: dom.textarea ? dom.textarea.value.length : 0,
+          source: "demo",
+        });
         break;
       case "help-scoreboard":
         if (YP.Modals && typeof YP.Modals.openScoreboardModal === "function") {
@@ -665,6 +810,7 @@
       });
 
       dom.textarea.addEventListener("keydown", function (event) {
+        handleDeletionKeydown(event);
         emit("keydown", { event: event });
       });
     }
@@ -781,6 +927,7 @@
 
   YP.App = {
     DEFAULT_FONT_SIZE: DEFAULT_FONT_SIZE,
+    DELETION_CONFIG: DELETION_CONFIG,
     state: state,
     get dom() {
       return dom;
@@ -806,6 +953,9 @@
     setEscalation: setEscalation,
     addCommentary: addCommentary,
     showToast: showToast,
+    handleDeletionKeydown: handleDeletionKeydown,
+    triggerBackspaceIntervention: triggerBackspaceIntervention,
+    triggerMassDeleteMeltdown: triggerMassDeleteMeltdown,
     newDocument: newDocument,
     openDocumentPicker: openDocumentPicker,
     loadFile: loadFile,

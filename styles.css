@@ -947,6 +947,138 @@ body {
   line-height: 1.35;
 }
 
+.yp-toast-warning {
+  border-left: 3px solid #f59e0b;
+}
+
+.yp-toast-danger {
+  border-left: 3px solid var(--error-color);
+}
+
+/* Center Ragebait Intervention Popup (Ticket 05 / Ticket 12) */
+@keyframes yp-rage-pop {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.86); }
+  70% { opacity: 1; transform: translate(-50%, -50%) scale(1.03); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+.ragebait-center-card {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(400px, calc(100vw - 32px));
+  background: var(--card-bg);
+  border: 2px solid var(--error-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  animation: yp-rage-pop 0.22s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.ragebait-center-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  background: repeating-linear-gradient(
+    -45deg,
+    #b8291e,
+    #b8291e 10px,
+    #9c2017 10px,
+    #9c2017 20px
+  );
+  color: #ffffff;
+}
+
+.ragebait-center-title {
+  font-size: 12.5px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ragebait-close-btn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.2);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.14s ease, background-color 0.15s ease;
+}
+
+.ragebait-close-btn:hover {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.ragebait-center-body {
+  padding: 14px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ragebait-count-badge {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--error-bg);
+  color: var(--error-color);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.ragebait-center-message {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink-primary);
+  font-weight: 500;
+}
+
+.ragebait-center-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 16px 14px;
+  background: var(--panel-bg);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.ragebait-btn {
+  height: 30px;
+  padding: 0 11px;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.14s ease, background-color 0.15s ease;
+}
+
+.ragebait-btn-runaway {
+  border: 1px solid var(--border-strong);
+  background: var(--card-bg);
+  color: var(--ink-secondary);
+}
+
+.ragebait-btn-dismiss {
+  border: 1px solid var(--error-color);
+  background: var(--error-color);
+  color: #ffffff;
+}
+
+.ragebait-btn-dismiss:hover {
+  background: #a52c20;
+}
+
 #modal-overlay {
   position: fixed;
   inset: 0;
@@ -1035,8 +1167,13 @@ body {
   cursor: pointer;
 }
 
-.modal-btn:hover {
+.modal-btn:hover:not(:disabled) {
   background: var(--surface-bg);
+}
+
+.modal-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .modal-btn-primary {
@@ -1045,8 +1182,97 @@ body {
   color: #ffffff;
 }
 
-.modal-btn-primary:hover {
+.modal-btn-primary:hover:not(:disabled) {
   background: var(--accent-hover);
+}
+
+/* Backspace Intervention & Mass-Delete Meltdown Modal (Ticket 05) */
+.intervention-body,
+.meltdown-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.intervention-badge {
+  align-self: flex-start;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--error-bg);
+  color: var(--error-color);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.intervention-copy {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.meltdown-quote {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 700;
+  line-height: 1.45;
+  color: var(--ink-primary);
+}
+
+.meltdown-sub {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-secondary);
+}
+
+.meltdown-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.meltdown-phase {
+  color: var(--ink-secondary);
+  font-weight: 500;
+}
+
+.meltdown-pct {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--error-color);
+}
+
+.meltdown-progress-track {
+  width: 100%;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--surface-bg);
+  border: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+
+@keyframes yp-stripe-move {
+  from { background-position: 0 0; }
+  to { background-position: 28px 0; }
+}
+
+.meltdown-progress-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background-color: var(--error-color);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.22),
+    rgba(255, 255, 255, 0.22) 7px,
+    transparent 7px,
+    transparent 14px
+  );
+  background-size: 28px 28px;
+  animation: yp-stripe-move 0.7s linear infinite;
+  transition: width 0.06s linear;
 }
 
 /* Abandoned Screen Overlay (Ticket 11) */
