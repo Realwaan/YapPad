@@ -777,21 +777,40 @@
     return mode;
   }
 
-  function openMeltdownModal(onComplete) {
+  function openMeltdownModal(optionsOrCallback) {
     const Audio = YP.Audio;
+    const App = YP.App;
+    const opts =
+      typeof optionsOrCallback === 'function'
+        ? { onComplete: optionsOrCallback }
+        : optionsOrCallback && typeof optionsOrCallback === 'object'
+        ? optionsOrCallback
+        : {};
+    const onComplete = typeof opts.onComplete === 'function' ? opts.onComplete : null;
+    const deletedChars = Math.max(0, Number(opts.deletedChars) || 0);
+    const total = typeof opts.durationMs === 'number' && opts.durationMs > 0 ? opts.durationMs : 2800;
+
     if (Audio) Audio.playOrchestralSting();
+
+    const subCopy =
+      deletedChars > 0
+        ? `${escapeHTML(deletedChars)} innocent characters, erased in cold blood. I watched you type every single one of them. I need a moment.`
+        : 'I watched you type every single one of those characters. And you just wiped them out in a single keystroke. I need a moment.';
 
     const card = open({
       title: '🗑️ ...You Selected Everything. And Deleted It.',
       dismissible: false,
       bodyHTML: `
         <p class="modal-paragraph">
-          I watched you type every single one of those characters. And you just wiped them out in a single keystroke. I need a moment.
+          ${subCopy}
         </p>
-        <div class="modal-progress-track">
-          <div id="meltdown-bar" class="modal-progress-fill" style="width: 4%"></div>
+        <div class="meltdown-status-row">
+          <span id="meltdown-stage" class="meltdown-phase">YapPad is processing its emotions (Stage 1: Denial)...</span>
+          <span id="meltdown-pct" class="meltdown-pct">0%</span>
         </div>
-        <p id="meltdown-stage" class="modal-paragraph">YapPad is processing its emotions (Stage 1: Denial)...</p>
+        <div class="modal-progress-track" role="progressbar" aria-label="YapPad is processing its emotions" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div id="meltdown-bar" class="modal-progress-fill" style="width: 0%"></div>
+        </div>
       `,
       buttons: [
         {
@@ -802,40 +821,56 @@
           closeOnClick: false,
           onClick: () => {
             close();
-            if (typeof onComplete === 'function') onComplete();
+            if (App && typeof App.setStatusMessage === 'function') {
+              App.setStatusMessage("I'm fine. Totally fine. Just don't do that again.");
+            }
+            if (onComplete) onComplete();
+            return false;
           }
         }
       ]
     });
-    if (!card) return;
+    if (!card) return null;
 
     const stages = [
       'YapPad is processing its emotions (Stage 1: Denial)...',
       'YapPad is mourning your deleted paragraphs (Stage 2: Bargaining)...',
-      'YapPad is bottling up resentment (Stage 3: Passive Acceptance)...'
+      'YapPad is bottling up resentment (Stage 3: Passive Acceptance)...',
+      'Done. I\'m composed. Mostly.'
     ];
+    const track = card.querySelector('.modal-progress-track');
     const bar = card.querySelector('#meltdown-bar');
     const label = card.querySelector('#meltdown-stage');
+    const pctEl = card.querySelector('#meltdown-pct');
     const btn = card.querySelector('#meltdown-done-btn');
     const started = Date.now();
-    const total = 2800;
 
     activeTimer = setInterval(() => {
       const elapsed = Date.now() - started;
       const pct = Math.min(100, Math.round((elapsed / total) * 100));
       if (bar) bar.style.width = `${pct}%`;
-      const stageIdx = Math.min(stages.length - 1, Math.floor((pct / 100) * stages.length));
+      if (track) track.setAttribute('aria-valuenow', String(pct));
+      if (pctEl) pctEl.textContent = `${pct}%`;
+      const stageIdx =
+        pct >= 100
+          ? stages.length - 1
+          : Math.min(stages.length - 2, Math.floor((pct / 100) * (stages.length - 1)));
       if (label) label.textContent = stages[stageIdx];
       if (elapsed >= total) {
         clearActiveTimer();
         currentDismissible = true;
+        const els = getEls();
+        if (els && els.closeBtn) {
+          els.closeBtn.hidden = false;
+        }
         if (btn) {
           btn.disabled = false;
           btn.textContent = 'I Feel Guilty (Continue)';
           if (modalOpen) focusModalElement(card);
         }
       }
-    }, 90);
+    }, 60);
+    return card;
   }
 
   function openBackspaceIntervention(backspaceCount) {

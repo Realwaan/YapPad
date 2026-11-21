@@ -54,6 +54,15 @@
     GHOSTWRITE_CHAR_MS: 38
   };
 
+  const DELETION_CONFIG = {
+    GUILT_COOLDOWN_MS: 2200,
+    INTERVENTION_INTERVAL: 5
+  };
+
+  const deletionTracker = {
+    lastGuiltAt: -Infinity
+  };
+
   const state = {
     filename: 'untitled_regret.txt',
     dirty: false,
@@ -1444,6 +1453,115 @@
     }
   }
 
+  function isWholeBufferSelected(textarea) {
+    if (!textarea) return false;
+    const len = textarea.value.length;
+    if (len <= 0) return false;
+    return (textarea.selectionStart || 0) === 0 && (textarea.selectionEnd || 0) === len;
+  }
+
+  function triggerMassDeleteMeltdown(options = {}) {
+    const textarea = el('editor-textarea');
+    const Modals = root.YP.Modals;
+    const deletedChars =
+      typeof options.deletedChars === 'number'
+        ? options.deletedChars
+        : textarea
+        ? textarea.value.length
+        : 0;
+    const source = options.source || 'mass-delete';
+
+    addCommentary('...You selected everything. And deleted it. I need a moment.', {
+      tag: '💥 Mass Delete'
+    });
+    if (Modals && typeof Modals.openMeltdownModal === 'function') {
+      return Modals.openMeltdownModal({
+        deletedChars,
+        source,
+        durationMs: options.durationMs,
+        onComplete: options.onComplete
+      });
+    }
+    return null;
+  }
+
+  function triggerBackspaceIntervention(countOverride) {
+    const count = typeof countOverride === 'number' ? countOverride : state.backspaces;
+    const Moods = root.YP.Moods;
+    const Ragebait = root.YP.Ragebait;
+    const Modals = root.YP.Modals;
+    const line = Moods
+      ? Moods.getLine(state.mood, 'backspacePattern')
+      : 'Deleting again? This is becoming a pattern.';
+
+    addCommentary(line, { tag: `🗑️ Backspace #${count}` });
+    if (Ragebait && typeof Ragebait.onMistake === 'function') {
+      Ragebait.onMistake({
+        token: `Backspace ×${count}`,
+        message: line
+      });
+      return 'ragebait';
+    }
+    if (Modals && typeof Modals.openBackspaceIntervention === 'function') {
+      Modals.openBackspaceIntervention(count);
+      return 'modal';
+    }
+    return null;
+  }
+
+  function handleDeletionKeydown(e, nowOverride) {
+    if (!e || (e.key !== 'Backspace' && e.key !== 'Delete')) return null;
+    const textarea = el('editor-textarea');
+    const now = typeof nowOverride === 'number' ? nowOverride : Date.now();
+    const isMassDelete = isWholeBufferSelected(textarea);
+    const deletedChars = textarea ? textarea.value.length : 0;
+
+    state.backspaces += 1;
+    const count = state.backspaces;
+    const bsEl = el('stat-backspaces');
+    if (bsEl) bsEl.textContent = String(count);
+    updateEscalation();
+
+    // Mass delete (Ctrl+A + Backspace/Delete on non-empty buffer): let native deletion
+    // finish first, then launch the emotional meltdown modal.
+    if (isMassDelete) {
+      if (textarea) {
+        state.undoSnapshot = captureEditorSnapshot(textarea);
+      }
+      root.setTimeout(() => {
+        triggerMassDeleteMeltdown({
+          deletedChars,
+          source: 'mass-delete'
+        });
+      }, 0);
+      return { type: 'mass-delete', count };
+    }
+
+    const Moods = root.YP.Moods;
+    const Audio = root.YP.Audio;
+    if (Audio) Audio.playGuiltPop();
+
+    // Every 5th Backspace/Delete triggers the center ragebait intervention
+    if (count % DELETION_CONFIG.INTERVENTION_INTERVAL === 0) {
+      deletionTracker.lastGuiltAt = now;
+      triggerBackspaceIntervention(count);
+      return { type: 'intervention', count };
+    }
+
+    // Single deletion guilt trip (rate-limited so normal editing stays readable)
+    if (now - deletionTracker.lastGuiltAt >= DELETION_CONFIG.GUILT_COOLDOWN_MS) {
+      deletionTracker.lastGuiltAt = now;
+      const line = Moods
+        ? Moods.getLine(state.mood, 'backspace')
+        : 'Are you sure? You worked so hard on that.';
+      addCommentary(line, { tag: '🗑️ Guilt Trip' });
+      showToast(line, 'warning');
+      return { type: 'guilt', count, line };
+    }
+
+    return { type: 'counted', count };
+  }
+
   function handleAction(action, itemEl) {
     const textarea = el('editor-textarea');
     const Modals = root.YP.Modals;
@@ -1453,6 +1571,9 @@
       case 'file-new':
         if (textarea) {
           stopGhostwriting('new-document');
+          if (Ragebait && typeof Ragebait.clearAll === 'function') {
+            Ragebait.clearAll();
+          }
           state.undoSnapshot = captureEditorSnapshot(textarea);
           state.redoSnapshot = null;
           textarea.value = '';
@@ -1532,7 +1653,10 @@
         triggerSaveFlow('delay');
         break;
       case 'demo-meltdown':
-        if (Modals) Modals.openMeltdownModal();
+        triggerMassDeleteMeltdown({
+          deletedChars: textarea ? textarea.value.length : 0,
+          source: 'demo'
+        });
         break;
       case 'demo-ghostwrite':
         startGhostwriting();
@@ -1596,48 +1720,7 @@
       state.idle15Fired = false;
 
       if (e.key === 'Backspace' || e.key === 'Delete') {
-        const selStart = textarea.selectionStart || 0;
-        const selEnd = textarea.selectionEnd || 0;
-        const fullLen = textarea.value.length;
-
-        // Mass delete check (entire non-empty document selected)
-        if (fullLen >= 10 && selStart === 0 && selEnd === fullLen) {
-          state.undoSnapshot = captureEditorSnapshot(textarea);
-          if (root.YP.Modals) {
-            root.YP.Modals.openMeltdownModal();
-          }
-          addCommentary('...You selected everything. And deleted it. I need a moment.', {
-            tag: '🗑️ Mass Delete'
-          });
-          return;
-        }
-
-        state.backspaces += 1;
-        const bsEl = el('stat-backspaces');
-        if (bsEl) bsEl.textContent = String(state.backspaces);
-        updateEscalation();
-
-        const Moods = root.YP.Moods;
-        const Audio = root.YP.Audio;
-        if (Audio) Audio.playGuiltPop();
-
-        if (state.backspaces % 5 === 0) {
-          const line = Moods
-            ? Moods.getLine(state.mood, 'backspacePattern')
-            : 'Deleting again? This is becoming a pattern.';
-          addCommentary(line, { tag: `🗑️ Backspace #${state.backspaces}` });
-          if (root.YP.Ragebait) {
-            root.YP.Ragebait.onMistake({
-              token: `Backspace ×${state.backspaces}`,
-              message: line
-            });
-          }
-        } else if (state.backspaces % 2 === 1) {
-          const line = Moods
-            ? Moods.getLine(state.mood, 'backspace')
-            : 'Are you sure? You worked so hard on that.';
-          addCommentary(line, { tag: '🗑️ Guilt Trip' });
-        }
+        handleDeletionKeydown(e, now);
         return;
       }
 
@@ -1811,9 +1894,11 @@
     MAX_TOASTS,
     DEFAULT_TOAST_DURATION_MS,
     SPEED_CONFIG,
+    DELETION_CONFIG,
     state,
     init,
     setDirty,
+    setStatusMessage,
     escapeHTML,
     setMood,
     runGrammarCheck,
@@ -1824,6 +1909,9 @@
     triggerAngryWordScramble,
     computeRollingWpm,
     tickTelemetry,
+    handleDeletionKeydown,
+    triggerBackspaceIntervention,
+    triggerMassDeleteMeltdown,
     startGhostwriting,
     stopGhostwriting,
     undoDocument,
