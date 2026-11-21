@@ -65,13 +65,13 @@
     'Pemberton et al.',
     'Hargreaves & Sterling',
     'Vonnegut & Strunk',
-    'blackwell-Sykes',
+    'Blackwell-Sykes',
     'Abernathy & Sterling'
   ];
 
   const CITATION_JOURNALS = [
     'J. Lexical Despair',
-    'Annals of avoidable Syntax',
+    'Annals of Avoidable Syntax',
     'Oxford Review of Mediocre Prose',
     'Quarterly Compendium of Sighs',
     'Proc. Soc. Pedantic Editors'
@@ -181,6 +181,8 @@
     { stage: 4, name: 'Unhinged Chaos', minScore: 22 }
   ];
 
+  const SUPPORTIVE_ROLL_CHANCE = 0.08;
+
   function makeFakeCitation(word) {
     const clean = String(word || 'syntax').replace(/[^a-zA-Z0-9_-]/g, '') || 'lexeme';
     let hash = 0;
@@ -196,66 +198,176 @@
 
   function getFaceState(moodId, escalationStage = 0) {
     const m = MOODS[moodId] ? moodId : 'passive-aggressive';
-    const stage = Math.max(0, Math.min(4, Number(escalationStage) || 0));
-    const faces = {
-      'passive-aggressive': {
-        browLeft: { x1: 6.5, y1: 7.6, x2: 10, y2: 8.2 },
-        browRight: { x1: 14, y1: 8.2, x2: 17.5, y2: 7.4 },
-        mouth: 'M 8 16 Q 12 15.1 16 16',
-        pupilRadius: 1.4
-      },
-      dramatic: {
-        browLeft: { x1: 6.5, y1: 6.4, x2: 10, y2: 8.4 },
-        browRight: { x1: 14, y1: 8.4, x2: 17.5, y2: 6.4 },
-        mouth: 'M 8.5 16.5 Q 12 12.8 15.5 16.5',
-        pupilRadius: 1.65
-      },
-      intellectual: {
-        browLeft: { x1: 6.5, y1: 8.2, x2: 10, y2: 8.0 },
-        browRight: { x1: 14, y1: 7.2, x2: 17.5, y2: 6.3 },
-        mouth: 'M 8.5 15.8 L 15.5 15.6',
-        pupilRadius: 1.35
-      },
-      sad: {
-        browLeft: { x1: 6.5, y1: 8.6, x2: 10, y2: 7.2 },
-        browRight: { x1: 14, y1: 7.2, x2: 17.5, y2: 8.6 },
-        mouth: 'M 8 16.8 Q 12 13.8 16 16.8',
-        pupilRadius: 1.5
-      },
-      angry: {
-        browLeft: { x1: 6.5, y1: 6.5, x2: 10.2, y2: 8.9 },
-        browRight: { x1: 13.8, y1: 8.9, x2: 17.5, y2: 6.5 },
-        mouth: 'M 8 16.6 Q 12 13.5 16 16.6',
-        pupilRadius: 1.25
-      },
-      supportive: {
-        browLeft: { x1: 6.5, y1: 7.2, x2: 10, y2: 6.8 },
-        browRight: { x1: 14, y1: 6.8, x2: 17.5, y2: 7.2 },
-        mouth: 'M 7.8 14.8 Q 12 18.2 16.2 14.8',
-        pupilRadius: 1.6
-      }
+    const stage = Math.max(0, Math.min(4, Math.round(Number(escalationStage) || 0)));
+
+    const extras = {
+      tear: false,
+      monocle: false,
+      blush: false,
+      angerVein: false
     };
+    let animation = 'none';
+    let face = null;
+
+    switch (m) {
+      case 'passive-aggressive':
+        if (stage >= 4) {
+          face = {
+            browLeft: { x1: 6.2, y1: 6.9, x2: 10.2, y2: 8.6 },
+            browRight: { x1: 13.8, y1: 8.6, x2: 17.8, y2: 6.9 },
+            mouth: 'M 7.8 16.8 Q 12 14.2 16.2 16.8',
+            pupilRadius: 1.25
+          };
+          extras.angerVein = true;
+          animation = 'tremble';
+        } else if (stage >= 2) {
+          face = {
+            browLeft: { x1: 6.4, y1: 7.3, x2: 10.1, y2: 8.4 },
+            browRight: { x1: 13.9, y1: 8.4, x2: 17.6, y2: 7.2 },
+            mouth: 'M 8 16.3 Q 12 14.8 16 16.3',
+            pupilRadius: 1.35
+          };
+        } else {
+          face = {
+            browLeft: { x1: 6.5, y1: 7.6, x2: 10, y2: 8.2 },
+            browRight: { x1: 14, y1: 8.2, x2: 17.5, y2: 7.4 },
+            mouth: 'M 8 16 Q 12 15.1 16 16',
+            pupilRadius: 1.4
+          };
+        }
+        break;
+
+      case 'dramatic':
+        if (stage >= 3) {
+          face = {
+            browLeft: { x1: 6.2, y1: 5.9, x2: 10.2, y2: 8.6 },
+            browRight: { x1: 13.8, y1: 8.6, x2: 17.8, y2: 5.9 },
+            mouth: 'M 8.2 16.6 Q 12 12.1 15.8 16.6 Q 12 18.6 8.2 16.6 Z',
+            pupilRadius: 1.7
+          };
+          animation = 'tremble';
+          if (stage >= 4) extras.angerVein = true;
+        } else {
+          face = {
+            browLeft: { x1: 6.5, y1: 6.4, x2: 10, y2: 8.4 },
+            browRight: { x1: 14, y1: 8.4, x2: 17.5, y2: 6.4 },
+            mouth: 'M 8.5 16.5 Q 12 12.8 15.5 16.5',
+            pupilRadius: 1.65
+          };
+        }
+        break;
+
+      case 'intellectual':
+        extras.monocle = true;
+        if (stage >= 3) {
+          face = {
+            browLeft: { x1: 6.4, y1: 7.8, x2: 10.1, y2: 8.4 },
+            browRight: { x1: 14, y1: 7.0, x2: 17.6, y2: 6.0 },
+            mouth: 'M 8.2 16.2 Q 12 14.9 15.8 16.1',
+            pupilRadius: 1.3
+          };
+        } else {
+          face = {
+            browLeft: { x1: 6.5, y1: 8.2, x2: 10, y2: 8.0 },
+            browRight: { x1: 14, y1: 7.2, x2: 17.5, y2: 6.3 },
+            mouth: 'M 8.5 15.8 L 15.5 15.6',
+            pupilRadius: 1.35
+          };
+        }
+        break;
+
+      case 'sad':
+        extras.tear = true;
+        animation = 'droop';
+        if (stage >= 3) {
+          face = {
+            browLeft: { x1: 6.3, y1: 8.9, x2: 10.1, y2: 6.9 },
+            browRight: { x1: 13.9, y1: 6.9, x2: 17.7, y2: 8.9 },
+            mouth: 'M 7.8 17.2 Q 12 13.4 16.2 17.2',
+            pupilRadius: 1.55
+          };
+        } else {
+          face = {
+            browLeft: { x1: 6.5, y1: 8.6, x2: 10, y2: 7.2 },
+            browRight: { x1: 14, y1: 7.2, x2: 17.5, y2: 8.6 },
+            mouth: 'M 8 16.8 Q 12 13.8 16 16.8',
+            pupilRadius: 1.5
+          };
+        }
+        break;
+
+      case 'angry':
+        extras.angerVein = true;
+        animation = 'tremble';
+        if (stage >= 3) {
+          face = {
+            browLeft: { x1: 6.1, y1: 6.1, x2: 10.4, y2: 9.2 },
+            browRight: { x1: 13.6, y1: 9.2, x2: 17.9, y2: 6.1 },
+            mouth: 'M 7.8 17.0 L 9.9 15.2 L 12 16.5 L 14.1 15.2 L 16.2 17.0',
+            pupilRadius: 1.15
+          };
+        } else {
+          face = {
+            browLeft: { x1: 6.5, y1: 6.5, x2: 10.2, y2: 8.9 },
+            browRight: { x1: 13.8, y1: 8.9, x2: 17.5, y2: 6.5 },
+            mouth: 'M 8 16.6 Q 12 13.5 16 16.6',
+            pupilRadius: 1.25
+          };
+        }
+        break;
+
+      case 'supportive':
+        extras.blush = true;
+        animation = 'bounce';
+        face = {
+          browLeft: { x1: 6.5, y1: 7.2, x2: 10, y2: 6.8 },
+          browRight: { x1: 14, y1: 6.8, x2: 17.5, y2: 7.2 },
+          mouth: 'M 7.8 14.8 Q 12 18.4 16.2 14.8',
+          pupilRadius: 1.6
+        };
+        break;
+    }
+
     return {
       mood: m,
       escalation: stage,
-      ...faces[m]
+      ...face,
+      extras,
+      animation,
+      ariaLabel: `YapPad Face: ${MOODS[m].name} (Stage ${stage}/4)`
     };
   }
 
-  function rollRandomMood(currentMood) {
-    const entries = Object.values(MOODS);
-    const totalWeight = entries.reduce((acc, item) => acc + item.weight, 0);
-    let pick = Math.random() * totalWeight;
-    for (const item of entries) {
-      pick -= item.weight;
-      if (pick <= 0) {
-        if (item.id === currentMood && entries.length > 1) {
-          return item.id === 'passive-aggressive' ? 'dramatic' : 'passive-aggressive';
-        }
-        return item.id;
-      }
+  function rollRandomMood(currentMood, escalationStage = 0, rng) {
+    if (currentMood === 'supportive') {
+      return 'passive-aggressive';
     }
-    return 'passive-aggressive';
+    const stage = Math.max(0, Math.min(4, Number(escalationStage) || 0));
+    const r = typeof rng === 'function' ? Math.max(0, Math.min(0.999999, Number(rng()))) : Math.random();
+
+    if (r < SUPPORTIVE_ROLL_CHANCE) {
+      return 'supportive';
+    }
+
+    const candidates = Object.values(MOODS).filter(
+      (item) => item.id !== 'supportive' && item.id !== currentMood
+    );
+    if (candidates.length === 0) return 'passive-aggressive';
+
+    const weights = candidates.map((item) => {
+      let w = item.weight;
+      if (item.id === 'angry' && stage >= 2) w += (stage - 1) * 4;
+      else if (item.id === 'dramatic' && stage >= 2) w += (stage - 1) * 2;
+      return w;
+    });
+
+    const totalWeight = weights.reduce((acc, w) => acc + w, 0);
+    let pick = ((r - SUPPORTIVE_ROLL_CHANCE) / (1 - SUPPORTIVE_ROLL_CHANCE)) * totalWeight;
+    for (let i = 0; i < candidates.length; i++) {
+      pick -= weights[i];
+      if (pick <= 0) return candidates[i].id;
+    }
+    return candidates[candidates.length - 1].id;
   }
 
   function getLine(moodId, key, wordForCitation) {
@@ -272,10 +384,13 @@
   }
 
   function computeEscalationStage(metrics = {}) {
-    const errors = Number(metrics.errors) || 0;
-    const backspaces = Number(metrics.backspaces) || 0;
-    const closeCount = Number(metrics.closeCount) || 0;
-    const score = errors * 2 + Math.floor(backspaces / 2) + closeCount * 4;
+    const errors = Math.max(0, Number(metrics.errors) || 0);
+    const backspaces = Math.max(0, Number(metrics.backspaces) || 0);
+    const closeCount = Math.max(0, Number(metrics.closeCount) || 0);
+    const elapsedSec = Math.max(0, Number(metrics.elapsedSec) || 0);
+    const scrambles = Math.max(0, Number(metrics.scrambles) || 0);
+    const timePoints = Math.min(8, Math.floor(elapsedSec / 25));
+    const score = errors * 2 + Math.floor(backspaces / 2) + closeCount * 4 + scrambles * 2 + timePoints;
     let current = ESCALATION_STAGES[0];
     for (const s of ESCALATION_STAGES) {
       if (score >= s.minScore) current = s;
@@ -283,16 +398,96 @@
     return current;
   }
 
+  function hasMultipleDistinctChars(str) {
+    if (!str || str.length < 2) return false;
+    const first = str[0].toLowerCase();
+    for (let i = 1; i < str.length; i++) {
+      if (str[i].toLowerCase() !== first) return true;
+    }
+    return false;
+  }
+
+  function scrambleWord(word) {
+    const raw = String(word || '');
+    if (raw.length < 3 || !hasMultipleDistinctChars(raw)) return raw;
+
+    const titleCase =
+      raw[0] === raw[0].toUpperCase() &&
+      raw[0] !== raw[0].toLowerCase() &&
+      raw.slice(1) === raw.slice(1).toLowerCase();
+    const working = titleCase ? raw.toLowerCase() : raw;
+
+    let result = working;
+    const interior = working.slice(1, -1);
+
+    if (working.length >= 4 && hasMultipleDistinctChars(interior)) {
+      const reversed = working[0] + interior.split('').reverse().join('') + working[working.length - 1];
+      if (reversed !== working) {
+        result = reversed;
+      } else {
+        // Palindromic interior (e.g. "radar", "level") — swap first two distinct interior chars
+        const mid = interior.split('');
+        for (let i = 0; i < mid.length - 1; i++) {
+          if (mid[i] !== mid[i + 1]) {
+            const tmp = mid[i];
+            mid[i] = mid[i + 1];
+            mid[i + 1] = tmp;
+            result = working[0] + mid.join('') + working[working.length - 1];
+            break;
+          }
+        }
+      }
+    }
+
+    if (result === working) {
+      // Short words (len 3) or identical interior (e.g. "book", "noon")
+      const chars = working.split('');
+      for (let i = chars.length - 1; i > 0; i--) {
+        if (chars[i] !== chars[i - 1]) {
+          const tmp = chars[i];
+          chars[i] = chars[i - 1];
+          chars[i - 1] = tmp;
+          result = chars.join('');
+          break;
+        }
+      }
+    }
+
+    if (titleCase && result.length) {
+      result = result[0].toUpperCase() + result.slice(1);
+    }
+    return result;
+  }
+
+  function get(moodId) {
+    return MOODS[moodId] || MOODS['passive-aggressive'];
+  }
+
+  function formatBadge(moodId) {
+    return get(moodId).label;
+  }
+
   root.YP.Moods = {
     MOODS,
+    list: MOODS,
     DIALOGUE,
     GHOST_SCRIPTS,
     ESCALATION_STAGES,
+    SUPPORTIVE_ROLL_CHANCE,
+    'passive-aggressive': MOODS['passive-aggressive'],
+    dramatic: MOODS.dramatic,
+    intellectual: MOODS.intellectual,
+    sad: MOODS.sad,
+    angry: MOODS.angry,
+    supportive: MOODS.supportive,
+    get,
+    formatBadge,
     makeFakeCitation,
     getFaceState,
     rollRandomMood,
     getLine,
     getGhostScript,
-    computeEscalationStage
+    computeEscalationStage,
+    scrambleWord
   };
 })();

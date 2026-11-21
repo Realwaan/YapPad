@@ -8,6 +8,32 @@
     'We could of used a boring editor, it is definately going to judge every single word we type in real time. ' +
     'Honestly this demo is sooo good that the the judges will remember it forever.';
 
+  const MAX_COMMENTARY_CARDS = 40;
+  const MAX_TOASTS = 4;
+  const DEFAULT_TOAST_DURATION_MS = 4000;
+  const TOAST_EXIT_MS = 240;
+  const NEW_CARD_HIGHLIGHT_MS = 1600;
+
+  const ALLOWED_TOAST_TONES = new Set([
+    'neutral',
+    'info',
+    'warning',
+    'danger',
+    'success',
+    'supportive',
+    'snark'
+  ]);
+  const TOAST_TONE_ALIASES = {
+    warn: 'warning',
+    error: 'danger'
+  };
+  const CLEAR_NOTES_SNARKS = [
+    'You cleared the margin notes, but you cannot clear your conscience.',
+    'Erasing the evidence again? Bold move. I still remember every single typo.',
+    'Three attempts to silence your critic. Censorship will not fix your prose.',
+    'Sweep them under the rug all you want — I have plenty more judgments where those came from.'
+  ];
+
   const state = {
     filename: 'untitled_regret.txt',
     dirty: false,
@@ -30,8 +56,17 @@
     idle15Fired: false,
     ghostTimer: null,
     supportiveRevertTimer: null,
+    supportiveCountdownTimer: null,
+    supportiveCountdownText: null,
     moodTimer: null,
     telemetryTimer: null,
+    sessionStartedAt: Date.now(),
+    lastEscalationTickAt: 0,
+    scrambleCount: 0,
+    lastScrambleAt: 0,
+    angryWordsSinceScramble: 0,
+    eyeTrackRaf: null,
+    pendingPointer: null,
     seenIssueKeys: new Set(),
     seenIssueStarts: new Set(),
     undoSnapshot: null,
@@ -39,7 +74,8 @@
     remembersClose: false,
     currentIssues: [],
     fontSizePx: 15.5,
-    autocorrectFlip: 1
+    autocorrectFlip: 1,
+    clearNotesAttempts: 0
   };
 
   function el(id) {
@@ -109,7 +145,7 @@
         Modals.shakeActiveModal();
       }
       if (typeof Modals.getActiveSaveMode === 'function' && Modals.getActiveSaveMode()) {
-        showToast('Nice try. You cannot Ctrl+S your way out of judgment.');
+        showToast('Nice try. You cannot Ctrl+S your way out of judgment.', 'warning');
       }
       return Modals.getActiveSaveMode ? Modals.getActiveSaveMode() : null;
     }
@@ -119,6 +155,61 @@
       getContent: () => (textarea ? textarea.value : ''),
       onDownload: downloadTextFile
     });
+  }
+
+  function escapeHTML(str) {
+    const raw = str == null ? '' : String(str);
+    const Grammar = root.YP.Grammar;
+    if (Grammar && typeof Grammar.escapeHTML === 'function') {
+      return Grammar.escapeHTML(raw);
+    }
+    return raw
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function normalizeToastTone(rawTone) {
+    const lower = String(rawTone || 'neutral').trim().toLowerCase();
+    const mapped = TOAST_TONE_ALIASES[lower] || lower;
+    return ALLOWED_TOAST_TONES.has(mapped) ? mapped : 'neutral';
+  }
+
+  function clearToastTimers(toast) {
+    if (!toast) return;
+    if (toast._leaveTimer) {
+      root.clearTimeout(toast._leaveTimer);
+      toast._leaveTimer = null;
+    }
+    if (toast._removeTimer) {
+      root.clearTimeout(toast._removeTimer);
+      toast._removeTimer = null;
+    }
+  }
+
+  function dismissToast(toast, immediate) {
+    if (!toast) return;
+    clearToastTimers(toast);
+    if (immediate || !toast.parentNode) {
+      if (toast.parentNode) toast.parentNode.removeChild(toast);
+      return;
+    }
+    if (toast.classList && !toast.classList.contains('is-leaving')) {
+      toast.classList.add('is-leaving');
+    }
+    toast._removeTimer = root.setTimeout(() => {
+      toast._removeTimer = null;
+      if (toast.parentNode) toast.parentNode.removeChild(toast);
+    }, TOAST_EXIT_MS);
+  }
+
+  function updateCommentaryCount() {
+    const list = el('commentary-list');
+    const countEl = el('commentary-count');
+    if (!list || !countEl) return;
+    countEl.textContent = String(list.children.length);
   }
 
   function loadGrudgeState() {
@@ -131,7 +222,7 @@
           localStorage.getItem('yp_close_count') || localStorage.getItem('sn_close_count') || 0
         );
         state.remembersClose = rem;
-        state.closeCount = cnt;
+        state.closeCount = rem ? Math.max(1, Number.isFinite(cnt) ? cnt : 1) : 0;
       }
     } catch {
       // Ignore storage errors
@@ -151,9 +242,12 @@
     }
     state.remembersClose = false;
     state.closeCount = 0;
+    state.scrambleCount = 0;
+    state.angryWordsSinceScramble = 0;
+    state.sessionStartedAt = Date.now();
     updateEscalation();
     setStatusMessage('Oh. You again. (Grudge memory wiped back to Stage 0.)');
-    showToast('Grudge memory reset to Stage 0.', 'neutral');
+    showToast('Grudge memory reset to Stage 0.', 'info');
   }
 
   function setStatusMessage(msg) {
@@ -161,53 +255,151 @@
     if (statusEl) statusEl.textContent = msg;
   }
 
-  function showToast(text, tone = 'neutral') {
+  function showToast(text, toneOrOptions) {
     const stack = el('toast-stack');
-    if (!stack) return;
-    while (stack.children.length >= 4) {
-      stack.firstElementChild.remove();
+    if (!stack) return null;
+
+    const opts =
+      toneOrOptions && typeof toneOrOptions === 'object'
+        ? toneOrOptions
+        : { tone: toneOrOptions };
+    const safeTone = normalizeToastTone(opts.tone);
+    const parsedDuration = Number(opts.duration);
+    const durationMs =
+      Number.isFinite(parsedDuration) && parsedDuration > 0
+        ? parsedDuration
+        : DEFAULT_TOAST_DURATION_MS;
+
+    // Cap visible toast stack height so floating notifications stay unobtrusive
+    while (stack.children.length >= MAX_TOASTS) {
+      dismissToast(stack.firstElementChild, true);
     }
-    const item = document.createElement('div');
-    item.className = `toast-item toast-${tone}`;
-    item.textContent = text;
-    stack.appendChild(item);
-    setTimeout(() => {
-      if (item.parentNode) item.remove();
-    }, 3900);
+
+    const toast = document.createElement('div');
+    toast.className = `yp-toast yp-toast-${safeTone}`;
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('data-tone', safeTone);
+    toast.style.setProperty('--toast-duration', `${durationMs}ms`);
+    toast.innerHTML =
+      '<span class="yp-toast-dot" aria-hidden="true"></span>' +
+      `<span class="yp-toast-text">${escapeHTML(text)}</span>` +
+      '<span class="yp-toast-progress" aria-hidden="true"></span>';
+
+    // Never steal keyboard focus or cursor selection from #editor-textarea
+    toast.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+    });
+    toast.addEventListener('click', () => {
+      dismissToast(toast, false);
+    });
+
+    stack.appendChild(toast);
+
+    const leaveDelay = Math.max(0, durationMs - TOAST_EXIT_MS);
+    toast._leaveTimer = root.setTimeout(() => {
+      toast._leaveTimer = null;
+      if (toast.parentNode && toast.classList) {
+        toast.classList.add('is-leaving');
+      }
+    }, leaveDelay);
+
+    toast._removeTimer = root.setTimeout(() => {
+      toast._removeTimer = null;
+      if (toast.parentNode) toast.parentNode.removeChild(toast);
+    }, durationMs);
+
+    return toast;
   }
 
-  function addCommentary(text, meta = {}) {
+  function addCommentary(text, options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
     const list = el('commentary-list');
-    const countEl = el('commentary-count');
     const Moods = root.YP.Moods;
-    const moodInfo = (Moods && Moods.MOODS[state.mood]) || { emoji: '😒', name: 'Passive-Aggressive' };
+    const requestedMood = opts.mood || state.mood || 'passive-aggressive';
+    const moodInfo =
+      (Moods && Moods.MOODS && Moods.MOODS[requestedMood]) ||
+      (Moods && Moods.MOODS && Moods.MOODS['passive-aggressive']) || {
+        id: 'passive-aggressive',
+        emoji: '😒',
+        name: 'Passive-Aggressive',
+        label: '😒 Passive-Aggressive'
+      };
+    const moodId = moodInfo.id || String(requestedMood);
+    const moodBadge = moodInfo.label || `${moodInfo.emoji || ''} ${moodInfo.name || moodId}`.trim();
+    const categoryTag = opts.category || opts.tag || 'Margin Note';
 
-    setStatusMessage(text);
-    if (!list) return;
+    if (opts.updateStatus !== false) {
+      setStatusMessage(text);
+    }
+    if (!list) return null;
 
-    const card = document.createElement('article');
-    card.className = 'commentary-card';
-
-    const tag = meta.tag || moodInfo.name;
     const now = new Date();
-    const timeStr = now.toTimeString().slice(0, 8);
+    const timestamp = now.toTimeString().slice(0, 8);
+    const isoTime = now.toISOString();
 
-    const Grammar = root.YP.Grammar;
-    const esc = Grammar ? Grammar.escapeHTML : (s) => String(s);
+    const prevLatest = list.querySelector('.comment-card.is-latest');
+    if (prevLatest) {
+      prevLatest.classList.remove('is-latest');
+    }
 
-    card.innerHTML = `
-      <div class="commentary-meta">
-        <span class="commentary-tag">${esc(moodInfo.emoji)} ${esc(tag)}</span>
-        <span>${esc(timeStr)}</span>
-      </div>
-      <div class="commentary-text">${esc(text)}</div>
-    `;
+    const highlight = opts.highlight !== false;
+    const card = document.createElement('article');
+    const cardClasses = ['comment-card', 'is-latest'];
+    if (highlight) cardClasses.push('is-new');
+    if (opts.variant === 'ai') cardClasses.push('commentary-card-ai');
+    card.className = cardClasses.join(' ');
+    card.setAttribute('data-mood', moodId);
+    if (opts.source) {
+      card.setAttribute('data-source', String(opts.source));
+    }
+
+    card.innerHTML =
+      '<div class="comment-meta">' +
+      '<div class="comment-badges">' +
+      `<span class="comment-mood-badge">${escapeHTML(moodBadge)}</span>` +
+      `<span class="comment-category-tag">${escapeHTML(categoryTag)}</span>` +
+      '</div>' +
+      `<time class="comment-time" datetime="${escapeHTML(isoTime)}">${escapeHTML(timestamp)}</time>` +
+      '</div>' +
+      `<p class="comment-body">${escapeHTML(text)}</p>`;
 
     list.prepend(card);
-    while (list.children.length > 30) {
+    while (list.children.length > MAX_COMMENTARY_CARDS) {
       list.lastElementChild.remove();
     }
-    if (countEl) countEl.textContent = String(list.children.length);
+    updateCommentaryCount();
+
+    if (highlight) {
+      root.setTimeout(() => {
+        if (card.classList) card.classList.remove('is-new');
+      }, NEW_CARD_HIGHLIGHT_MS);
+    }
+
+    return card;
+  }
+
+  function clearCommentary() {
+    const list = el('commentary-list');
+    if (!list) return null;
+    list.innerHTML = '';
+
+    state.clearNotesAttempts += 1;
+    const attempt = state.clearNotesAttempts;
+    const snark =
+      attempt <= CLEAR_NOTES_SNARKS.length
+        ? CLEAR_NOTES_SNARKS[attempt - 1]
+        : `Clearing the margin notes ${attempt} times still will not make your draft any better.`;
+
+    if (root.YP.Audio && typeof root.YP.Audio.playGuiltPop === 'function') {
+      root.YP.Audio.playGuiltPop();
+    }
+
+    const card = addCommentary(snark, {
+      category: 'Nice Try',
+      tag: 'Nice Try'
+    });
+    showToast(snark, 'snark');
+    return card;
   }
 
   function applyFontShrinkPunishment(errorCount) {
@@ -247,32 +439,99 @@
       ? Moods.getLine(state.mood, 'restoreFont')
       : 'Fine. Here is your 15.5px font back. Try not to embarrass it.';
     addCommentary(line, { tag: 'Font Mercy' });
-    showToast(line);
+    showToast(line, 'supportive');
+  }
+
+  function setSvgVisible(node, visible) {
+    if (!node) return;
+    if (visible) {
+      node.removeAttribute('hidden');
+    } else {
+      node.setAttribute('hidden', '');
+    }
+  }
+
+  function syncMoodMenuState(moodId) {
+    if (typeof document === 'undefined') return;
+    const items = document.querySelectorAll('.menu-item[data-action="set-mood"]');
+    items.forEach((item) => {
+      const active = item.getAttribute('data-mood') === moodId;
+      item.classList.toggle('is-active', active);
+      item.setAttribute('aria-checked', active ? 'true' : 'false');
+    });
+  }
+
+  function clearSupportiveTimers() {
+    if (state.supportiveRevertTimer) {
+      clearTimeout(state.supportiveRevertTimer);
+      state.supportiveRevertTimer = null;
+    }
+    if (state.supportiveCountdownTimer) {
+      clearInterval(state.supportiveCountdownTimer);
+      state.supportiveCountdownTimer = null;
+    }
+    state.supportiveCountdownText = null;
+  }
+
+  function restartMoodTimer() {
+    if (state.moodTimer) {
+      clearInterval(state.moodTimer);
+      state.moodTimer = null;
+    }
+    state.moodTimer = setInterval(() => {
+      const Moods = root.YP.Moods;
+      if (!Moods || state.mood === 'supportive') return;
+      const next = Moods.rollRandomMood(state.mood, state.escalation);
+      setMood(next, true);
+      if (next === 'angry' && state.words >= 3) {
+        triggerAngryWordScramble();
+      }
+    }, 55000);
   }
 
   function updateWeatherLayer() {
     const layer = el('weather-layer');
     if (!layer) return;
     layer.innerHTML = '';
+    layer.classList.remove('weather-rain', 'weather-sparkles');
 
     if (state.mood === 'sad') {
-      for (let i = 0; i < 22; i++) {
+      layer.classList.add('weather-rain');
+      layer.setAttribute('data-weather', 'rain');
+      const frag = document.createDocumentFragment();
+      for (let i = 0; i < 28; i++) {
         const drop = document.createElement('div');
         drop.className = 'rain-drop';
-        drop.style.left = `${(i * 4.5 + (i % 3) * 2) % 98}%`;
-        drop.style.animationDuration = `${0.9 + (i % 5) * 0.18}s`;
-        drop.style.animationDelay = `${(i % 7) * 0.15}s`;
-        layer.appendChild(drop);
+        drop.style.left = `${(i * 3.55 + (i % 3) * 1.4) % 98}%`;
+        drop.style.height = `${18 + (i % 5) * 5}px`;
+        drop.style.animationDuration = `${0.85 + (i % 5) * 0.16}s`;
+        drop.style.animationDelay = `${-((i % 9) * 0.18).toFixed(2)}s`;
+        drop.style.setProperty('--drop-opacity', (0.38 + (i % 4) * 0.1).toFixed(2));
+        frag.appendChild(drop);
       }
+      layer.appendChild(frag);
     } else if (state.mood === 'supportive') {
-      for (let i = 0; i < 14; i++) {
-        const sp = document.createElement('div');
+      layer.classList.add('weather-sparkles');
+      layer.setAttribute('data-weather', 'sparkles');
+      const frag = document.createDocumentFragment();
+      const glyphs = ['✦', '✧', '⋆', '✨'];
+      const colors = ['#d49b1a', '#2b7a52', '#e37e88', '#e8a823'];
+      for (let i = 0; i < 20; i++) {
+        const sp = document.createElement('span');
         sp.className = 'sparkle-dot';
-        sp.style.left = `${8 + (i * 6.5) % 86}%`;
-        sp.style.top = `${14 + (i * 17) % 72}%`;
-        sp.style.animationDelay = `${(i % 6) * 0.3}s`;
-        layer.appendChild(sp);
+        sp.textContent = glyphs[i % glyphs.length];
+        sp.style.left = `${6 + (i * 4.7) % 88}%`;
+        sp.style.top = `${12 + (i * 19) % 74}%`;
+        sp.style.fontSize = `${11 + (i % 4) * 2.5}px`;
+        sp.style.animationDuration = `${1.9 + (i % 4) * 0.35}s`;
+        sp.style.animationDelay = `${-((i % 7) * 0.32).toFixed(2)}s`;
+        sp.style.setProperty('--sparkle-color', colors[i % colors.length]);
+        sp.style.setProperty('--drift-x', `${(i % 2 === 0 ? 1 : -1) * (8 + (i % 4) * 3)}px`);
+        frag.appendChild(sp);
       }
+      layer.appendChild(frag);
+    } else {
+      layer.setAttribute('data-weather', 'none');
     }
   }
 
@@ -280,11 +539,17 @@
     const Moods = root.YP.Moods;
     if (!Moods) return;
     const face = Moods.getFaceState(state.mood, state.escalation);
+    const svg = el('yappad-face');
     const browL = el('brow-left');
     const browR = el('brow-right');
     const mouth = el('face-mouth');
     const pupilL = el('pupil-left');
     const pupilR = el('pupil-right');
+
+    if (svg) {
+      if (face.ariaLabel) svg.setAttribute('aria-label', face.ariaLabel);
+      svg.setAttribute('data-anim', face.animation || 'none');
+    }
 
     if (browL && face.browLeft) {
       browL.setAttribute('x1', face.browLeft.x1);
@@ -303,15 +568,25 @@
     }
     if (pupilL && face.pupilRadius) pupilL.setAttribute('r', face.pupilRadius);
     if (pupilR && face.pupilRadius) pupilR.setAttribute('r', face.pupilRadius);
+
+    const extras = face.extras || {};
+    setSvgVisible(el('face-blush-left'), Boolean(extras.blush));
+    setSvgVisible(el('face-blush-right'), Boolean(extras.blush));
+    setSvgVisible(el('face-monocle'), Boolean(extras.monocle));
+    setSvgVisible(el('face-tear'), Boolean(extras.tear));
+    setSvgVisible(el('face-anger-vein'), Boolean(extras.angerVein));
   }
 
   function updateEscalation() {
     const Moods = root.YP.Moods;
     if (!Moods) return;
+    const elapsedSec = Math.max(0, Math.floor((Date.now() - state.sessionStartedAt) / 1000));
     const stageObj = Moods.computeEscalationStage({
       errors: state.errors,
       backspaces: state.backspaces,
-      closeCount: state.closeCount
+      closeCount: state.closeCount,
+      elapsedSec,
+      scrambles: state.scrambleCount
     });
     state.escalation = stageObj.stage;
     if (typeof document !== 'undefined' && document.body) {
@@ -327,12 +602,10 @@
     const Audio = root.YP.Audio;
     if (!Moods || !Moods.MOODS[nextMood]) return;
 
-    if (state.supportiveRevertTimer) {
-      clearTimeout(state.supportiveRevertTimer);
-      state.supportiveRevertTimer = null;
-    }
+    clearSupportiveTimers();
 
     state.mood = nextMood;
+    state.angryWordsSinceScramble = 0;
     const info = Moods.MOODS[nextMood];
 
     if (typeof document !== 'undefined' && document.body) {
@@ -341,24 +614,57 @@
     const moodStat = el('stat-mood');
     if (moodStat) moodStat.textContent = info.label;
 
+    syncMoodMenuState(nextMood);
     updateWeatherLayer();
     updateFaceExpression();
 
+    if (Audio) {
+      if (nextMood === 'supportive') Audio.playSupportiveChime();
+      else if (nextMood === 'angry') Audio.playAngryBuzz();
+      else if (nextMood === 'sad' && announce) Audio.playSigh();
+      else if (nextMood === 'intellectual' && announce) Audio.playDisappointmentDing();
+      else if (nextMood === 'dramatic' && announce) Audio.playGuiltPop();
+    }
+
+    if (announce) {
+      let line = Moods.getLine(nextMood, 'greeting');
+      if (nextMood === 'intellectual') {
+        const textarea = el('editor-textarea');
+        const words = textarea ? [...textarea.value.matchAll(/\b([a-zA-Z]{4,})\b/g)] : [];
+        if (words.length > 0) {
+          const citedWord = words[words.length - 1][1];
+          line = `${line} ${Moods.makeFakeCitation(citedWord)}`;
+        }
+      }
+      addCommentary(`Mood shifted to ${info.label}: ${line}`, { tag: 'Mood Shift' });
+    }
+
     if (nextMood === 'supportive') {
-      if (Audio) Audio.playSupportiveChime();
+      const durationSec = info.durationSec || 10;
+      let remaining = durationSec;
+      state.supportiveCountdownText = `🥰 Supportive mode active — reverting in ${remaining}s...`;
+      setStatusMessage(state.supportiveCountdownText);
+
+      state.supportiveCountdownTimer = setInterval(() => {
+        remaining -= 1;
+        if (remaining <= 0) return;
+        const statusEl = el('status-message');
+        if (statusEl && statusEl.textContent === state.supportiveCountdownText) {
+          state.supportiveCountdownText = `🥰 Supportive mode active — reverting in ${remaining}s...`;
+          setStatusMessage(state.supportiveCountdownText);
+        }
+      }, 1000);
+
       state.supportiveRevertTimer = setTimeout(() => {
+        clearSupportiveTimers();
+        if (state.mood !== 'supportive') return;
         setMood('passive-aggressive', false);
         addCommentary('Supportive mode expired (10s limit reached). Back to judging your life choices.', {
           tag: 'Mood Shift'
         });
-      }, (info.durationSec || 10) * 1000);
-    } else if (nextMood === 'angry' && Audio) {
-      Audio.playAngryBuzz();
-    }
-
-    if (announce) {
-      const line = Moods.getLine(nextMood, 'greeting');
-      addCommentary(`Mood shifted to ${info.label}: ${line}`, { tag: 'Mood Shift' });
+      }, durationSec * 1000);
+    } else if (state.moodTimer) {
+      restartMoodTimer();
     }
   }
 
@@ -369,41 +675,65 @@
     if (!textarea) return false;
 
     const text = textarea.value;
-    const matches = [...text.matchAll(/\b([a-zA-Z]{4,})\b/g)];
+    let matches = [...text.matchAll(/\b([a-zA-Z]{4,})\b/g)];
     if (matches.length === 0) {
-      addCommentary('I wanted to scramble one of your words in anger, but you haven\'t even typed a 4-letter word yet!', {
+      matches = [...text.matchAll(/\b([a-zA-Z]{3,})\b/g)];
+    }
+
+    const eligible = matches.filter((m) => {
+      const candidate = Moods && Moods.scrambleWord ? Moods.scrambleWord(m[0]) : m[0];
+      return candidate !== m[0];
+    });
+
+    if (eligible.length === 0) {
+      addCommentary('I wanted to scramble one of your words in anger, but you haven\'t even typed a scrambleable word yet!', {
         tag: '😡 Angry Scrambler'
       });
       return false;
     }
 
     state.undoSnapshot = text;
-    const target = matches[matches.length - 1];
+    const prevSelStart = textarea.selectionStart;
+    const prevSelEnd = textarea.selectionEnd;
+    const target = eligible[eligible.length - 1];
     const word = target[0];
     const start = target.index;
-    const chars = word.split('');
-    // Deterministic visible scramble
-    const scrambled =
-      chars[0] +
-      chars
-        .slice(1, -1)
-        .reverse()
-        .join('') +
-      chars[chars.length - 1];
-    const finalWord = scrambled === word ? word.split('').reverse().join('') : scrambled;
+    const finalWord =
+      Moods && typeof Moods.scrambleWord === 'function'
+        ? Moods.scrambleWord(word)
+        : word.split('').reverse().join('');
 
     textarea.value = text.slice(0, start) + finalWord + text.slice(start + word.length);
     setDirty(true);
+    try {
+      textarea.setSelectionRange(prevSelStart, prevSelEnd);
+    } catch {
+      // Ignore selection restoration errors
+    }
+
+    state.lastScrambleAt = Date.now();
+    state.scrambleCount += 1;
+    state.angryWordsSinceScramble = 0;
+
+    const stageEl = el('editor-stage');
+    if (stageEl) {
+      stageEl.classList.remove('angry-flash');
+      void stageEl.offsetWidth;
+      stageEl.classList.add('angry-flash');
+      setTimeout(() => stageEl.classList.remove('angry-flash'), 600);
+    }
+
     if (Audio) Audio.playAngryBuzz();
 
     runGrammarCheck(false);
     updateLineNumbersAndCounts();
+    updateEscalation();
 
     const apology = Moods
       ? Moods.getLine('angry', 'scrambleApology')
       : 'Ugh. I got mad and scrambled a word. Hit Ctrl+Z.';
     addCommentary(`Scrambled "${word}" → "${finalWord}". ${apology}`, { tag: '😡 Word Scrambler' });
-    showToast(`😡 Scrambled "${word}" → "${finalWord}"! (Ctrl+Z to undo)`);
+    showToast(`😡 Scrambled "${word}" → "${finalWord}"! (Ctrl+Z to undo)`, 'danger');
     return true;
   }
 
@@ -484,8 +814,12 @@
     const cursorEl = el('cursor-pos');
     if (cursorEl) cursorEl.textContent = `Ln ${row}, Col ${col}`;
 
-    // Check ~30-word AI roast milestone
-    if (words >= state.lastRoastWordMilestone + 30) {
+    // Check ~30-word AI roast milestone (reset downward on large deletions or clear)
+    if (words === 0) {
+      state.lastRoastWordMilestone = 0;
+    } else if (words <= state.lastRoastWordMilestone - 15) {
+      state.lastRoastWordMilestone = Math.floor(words / 30) * 30;
+    } else if (words >= 30 && words >= state.lastRoastWordMilestone + 30) {
       state.lastRoastWordMilestone = Math.floor(words / 30) * 30;
       triggerAIRoast(false);
     }
@@ -553,24 +887,65 @@
   }
 
   async function triggerAIRoast(manual = false) {
-    if (state.roastInFlight) return;
+    if (state.roastInFlight) return null;
     const AI = root.YP.AI;
     const Audio = root.YP.Audio;
     const textarea = el('editor-textarea');
-    if (!AI || !textarea) return;
+    if (!AI || !textarea) return null;
+
+    const cfg = typeof AI.getConfig === 'function' ? AI.getConfig() : null;
+    const usingCloud = Boolean(
+      cfg && (cfg.provider === 'gemini' || cfg.provider === 'openai') && cfg.apiKey
+    );
+    const telemetry = getTelemetry();
+    if (manual) {
+      state.lastRoastWordMilestone = state.words;
+    }
+
+    if (usingCloud) {
+      setStatusMessage('AI Brain is evaluating your draft...');
+    }
 
     state.roastInFlight = true;
     try {
-      const result = await AI.roast(textarea.value, state.mood, getTelemetry());
-      if (Audio) Audio.playRoastPop();
+      const roastFn = typeof AI.roast === 'function' ? AI.roast : AI.requestRoast;
+      let result;
+      try {
+        result = await roastFn(textarea.value, state.mood, telemetry);
+      } catch (err) {
+        const offlineText =
+          typeof AI.generateOfflineRoast === 'function'
+            ? AI.generateOfflineRoast(textarea.value, state.mood, telemetry)
+            : 'Interesting choice of words. Bold. Wrong, but bold.';
+        result = {
+          text: offlineText,
+          provider: 'offline',
+          fallback: true,
+          error: (err && err.message) || 'AI request failed'
+        };
+      }
+
+      const roastText = typeof result === 'string' ? result : (result && result.text) || '';
+      if (!roastText) return result;
+
+      if (Audio && typeof Audio.playRoastPop === 'function') {
+        Audio.playRoastPop();
+      }
       const tag =
-        result.provider === 'gemini'
-          ? '🧠 Gemini Roast'
-          : result.provider === 'openai'
-          ? '🧠 OpenAI Roast'
-          : '🧠 AI Critic';
-      addCommentary(result.text, { tag });
-      if (manual) showToast(result.text);
+        result && result.provider === 'gemini'
+          ? '🧠 AI Judgment · Gemini'
+          : result && result.provider === 'openai'
+          ? '🧠 AI Judgment · OpenAI'
+          : result && result.fallback
+          ? '🧠 AI Judgment · Offline Fallback'
+          : '🧠 AI Judgment · Offline';
+      addCommentary(roastText, {
+        tag,
+        variant: 'ai',
+        source: (result && result.provider) || 'offline'
+      });
+      if (manual) showToast(roastText, 'snark');
+      return result;
     } finally {
       state.roastInFlight = false;
     }
@@ -659,6 +1034,12 @@
       state.idle15Fired = true;
       startGhostwriting();
     }
+
+    // 5. Periodic time-based escalation check (every 5s)
+    if (now - state.lastEscalationTickAt >= 5000) {
+      state.lastEscalationTickAt = now;
+      updateEscalation();
+    }
   }
 
   function insertRoastableSampleText() {
@@ -702,9 +1083,9 @@
     if (!badge) return;
     const label =
       cfg.provider === 'gemini'
-        ? 'AI: Gemini 2.5'
+        ? `AI: ${cfg.geminiModel || 'gemini-2.5-flash'}`
         : cfg.provider === 'openai'
-        ? 'AI: GPT-4o-mini'
+        ? `AI: ${cfg.openaiModel || 'gpt-4o-mini'}`
         : 'AI: Offline Critic';
     badge.textContent = label;
   }
@@ -742,6 +1123,7 @@
         const Audio = root.YP.Audio;
         const on = Audio ? Audio.getConfig().enabled : true;
         audioBtn.textContent = on ? '🔊 Audio: On' : '🔇 Audio: Muted';
+        audioBtn.setAttribute('aria-pressed', on ? 'false' : 'true');
       };
       syncAudioBtn();
       audioBtn.addEventListener('click', () => {
@@ -783,6 +1165,7 @@
         if (root.YP.Audio) root.YP.Audio.playCornerZip();
         addCommentary('I won\'t fix that. You need to learn.', { tag: '✨ Autocorrect Refused' });
       };
+      autoBtn.addEventListener('mousedown', (e) => e.preventDefault());
       autoBtn.addEventListener('mouseenter', dodgeAutocorrect);
       autoBtn.addEventListener('click', dodgeAutocorrect);
     }
@@ -790,12 +1173,11 @@
     // Clear commentary button
     const clearNotesBtn = el('btn-clear-notes');
     if (clearNotesBtn) {
+      clearNotesBtn.addEventListener('mousedown', (event) => {
+        event.preventDefault();
+      });
       clearNotesBtn.addEventListener('click', () => {
-        const list = el('commentary-list');
-        if (list) list.innerHTML = '';
-        addCommentary('You cleared the margin notes, but you cannot clear your conscience.', {
-          tag: 'Nice Try'
-        });
+        clearCommentary();
       });
     }
 
@@ -805,6 +1187,8 @@
       reopenBtn.addEventListener('click', () => {
         const ab = el('abandoned-screen');
         if (ab) ab.hidden = true;
+        const textarea = el('editor-textarea');
+        if (textarea) textarea.focus();
         addCommentary(
           `Look who crawled back after closing me (${state.closeCount} betrayal${state.closeCount === 1 ? '' : 's'} on record).`,
           { tag: '👁️ I Remember' }
@@ -871,9 +1255,16 @@
       case 'file-exit':
         if (Modals) {
           Modals.openExitFlow((closeCount) => {
+            if (Ragebait) Ragebait.clearAll();
             state.remembersClose = true;
             state.closeCount = closeCount;
             updateEscalation();
+            const sub = el('abandoned-subtext');
+            if (sub) {
+              sub.innerHTML =
+                `I left <code>i_remember.txt</code> in your downloads so you don't forget what you did ` +
+                `(${closeCount} betrayal${closeCount === 1 ? '' : 's'} logged).`;
+            }
             const ab = el('abandoned-screen');
             if (ab) ab.hidden = false;
           });
@@ -991,7 +1382,7 @@
             : 'Deleting again? This is becoming a pattern.';
           addCommentary(line, { tag: `🗑️ Backspace #${state.backspaces}` });
           if (root.YP.Ragebait) {
-            root.YP.Ragebait.showCenterRagebait({
+            root.YP.Ragebait.onMistake({
               token: `Backspace ×${state.backspaces}`,
               message: line
             });
@@ -1016,6 +1407,20 @@
       state.lastKeyAt = Date.now();
       runGrammarCheck(true);
       updateLineNumbersAndCounts();
+
+      // In Angry mood, scramble a recent completed word after every 3 words (10s cooldown)
+      if (state.mood === 'angry') {
+        const pos = textarea.selectionStart || 0;
+        if (pos > 0 && /[\s.,!?;:]$/.test(textarea.value.slice(0, pos))) {
+          state.angryWordsSinceScramble += 1;
+          if (
+            state.angryWordsSinceScramble >= 3 &&
+            Date.now() - state.lastScrambleAt >= 10000
+          ) {
+            triggerAngryWordScramble();
+          }
+        }
+      }
     });
 
     // Global keyboard shortcuts
@@ -1056,24 +1461,56 @@
         }
       });
 
-      // Eye-tracking pupils
-      window.addEventListener('mousemove', (e) => {
+      // Eye-tracking pupils (rAF-throttled)
+      const applyPupilGaze = (clientX, clientY) => {
         const face = el('yappad-face');
         const pL = el('pupil-left');
         const pR = el('pupil-right');
         if (!face || !pL || !pR) return;
         const rect = face.getBoundingClientRect();
+        if (!rect || rect.width <= 0 || rect.height <= 0) return;
         const cx = rect.left + rect.width / 2;
         const cy = rect.top + rect.height / 2;
-        const angle = Math.atan2(e.clientY - cy, e.clientX - cx);
-        const dist = Math.min(1.4, Math.hypot(e.clientX - cx, e.clientY - cy) / 90);
+        const angle = Math.atan2(clientY - cy, clientX - cx);
+        const dist = Math.min(1.4, Math.hypot(clientX - cx, clientY - cy) / 90);
         const dx = Math.cos(angle) * dist;
         const dy = Math.sin(angle) * dist;
         pL.setAttribute('cx', (8.5 + dx).toFixed(2));
         pL.setAttribute('cy', (10.5 + dy).toFixed(2));
         pR.setAttribute('cx', (15.5 + dx).toFixed(2));
         pR.setAttribute('cy', (10.5 + dy).toFixed(2));
+      };
+
+      window.addEventListener('mousemove', (e) => {
+        state.pendingPointer = { x: e.clientX, y: e.clientY };
+        if (typeof window.requestAnimationFrame === 'function') {
+          if (state.eyeTrackRaf) return;
+          state.eyeTrackRaf = window.requestAnimationFrame(() => {
+            state.eyeTrackRaf = null;
+            if (state.pendingPointer) {
+              applyPupilGaze(state.pendingPointer.x, state.pendingPointer.y);
+            }
+          });
+        } else {
+          applyPupilGaze(e.clientX, e.clientY);
+        }
       });
+
+      if (typeof document !== 'undefined' && document.documentElement) {
+        document.documentElement.addEventListener('mouseleave', () => {
+          state.pendingPointer = null;
+          const pL = el('pupil-left');
+          const pR = el('pupil-right');
+          if (pL) {
+            pL.setAttribute('cx', '8.5');
+            pL.setAttribute('cy', '10.5');
+          }
+          if (pR) {
+            pR.setAttribute('cx', '15.5');
+            pR.setAttribute('cy', '10.5');
+          }
+        });
+      }
 
       window.addEventListener('beforeunload', (e) => {
         if (state.dirty) {
@@ -1086,31 +1523,25 @@
 
   function init() {
     if (typeof document === 'undefined') return;
+    state.sessionStartedAt = Date.now();
     loadGrudgeState();
     wireMenusAndControls();
     wireEditorEvents();
     setDirty(false);
+    syncMoodMenuState(state.mood);
     updateAIBadge();
     updateEscalation();
     updateFaceExpression();
 
     if (state.remembersClose) {
       const msg = `Oh. You again. I still remember the ${state.closeCount} time${state.closeCount === 1 ? '' : 's'} you closed me.`;
-      addCommentary(msg, { tag: '👁️ Grudge Memory' });
+      addCommentary(msg, { category: 'Grudge Memory', tag: '👁️ Grudge Memory', highlight: false });
     } else {
-      addCommentary('Oh. You again.', { tag: '😒 Startup' });
+      addCommentary('Oh. You again.', { category: 'Startup', tag: 'Startup', highlight: false });
     }
 
     state.telemetryTimer = setInterval(tickTelemetry, 450);
-    state.moodTimer = setInterval(() => {
-      const Moods = root.YP.Moods;
-      if (!Moods) return;
-      const next = Moods.rollRandomMood(state.mood);
-      setMood(next, true);
-      if (next === 'angry' && state.words >= 3) {
-        triggerAngryWordScramble();
-      }
-    }, 55000);
+    restartMoodTimer();
   }
 
   if (typeof document !== 'undefined') {
@@ -1122,19 +1553,25 @@
   }
 
   root.YP.App = {
+    MAX_COMMENTARY_CARDS,
+    MAX_TOASTS,
+    DEFAULT_TOAST_DURATION_MS,
     state,
     init,
     setDirty,
+    escapeHTML,
     setMood,
     runGrammarCheck,
     applyFontShrinkPunishment,
     restoreNormalFont,
     insertRoastableSampleText,
+    triggerAIRoast,
     triggerAngryWordScramble,
     startGhostwriting,
     stopGhostwriting,
     resetGrudgeMemory,
     addCommentary,
+    clearCommentary,
     showToast,
     getTelemetry,
     updateAIBadge,
@@ -1148,8 +1585,8 @@
         if (docNameEl) docNameEl.textContent = state.filename;
       }
       setDirty(false);
-      addCommentary(note, { tag: '💾 Saved' });
-      showToast(note);
+      addCommentary(note, { category: 'Saved', tag: '💾 Saved' });
+      showToast(note, 'success');
     }
   };
 })();

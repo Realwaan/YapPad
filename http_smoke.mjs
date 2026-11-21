@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { createServer } from './server.mjs';
 
 const server = createServer();
@@ -6,6 +7,20 @@ const server = createServer();
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const { port } = server.address();
 const baseUrl = `http://127.0.0.1:${port}`;
+
+function rawGetStatus(reqPath) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { host: '127.0.0.1', port, method: 'GET', path: reqPath },
+      (res) => {
+        res.resume();
+        res.on('end', () => resolve(res.statusCode));
+      }
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
 
 try {
   const paths = [
@@ -29,8 +44,23 @@ try {
     assert.ok(body.length > 10, `Expected non-empty body for ${p}`);
   }
 
-  const traversalRes = await fetch(`${baseUrl}/..%2fpackage.json`);
-  assert.ok([400, 403, 404].includes(traversalRes.status), 'Path traversal must be blocked');
+  const blockedPaths = [
+    '/../',
+    '/../etc/passwd',
+    '/%2e%2e/',
+    '/..%2fpackage.json',
+    '/js/../../etc/passwd',
+    '/.env',
+    '/.git/config'
+  ];
+
+  for (const badPath of blockedPaths) {
+    const status = await rawGetStatus(badPath);
+    assert.ok(
+      [400, 403, 404].includes(status),
+      `Path traversal / hidden file must be blocked for ${badPath}, got ${status}`
+    );
+  }
 
   console.log('HTTP_SMOKE_TEST_PASSED');
 } finally {
