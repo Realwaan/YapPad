@@ -245,8 +245,12 @@ html, body {
 }
 
 .titlebar-logo {
-  font-size: 16px;
-  line-height: 1;
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+  display: block;
+  flex-shrink: 0;
+  filter: drop-shadow(0 1px 1px rgba(28, 22, 16, 0.16));
 }
 
 .titlebar-heading {
@@ -1737,6 +1741,46 @@ body[data-mood="supportive"] #weather-layer::before,
   flex-direction: column;
   gap: 8px;
   margin-top: 8px;
+}
+
+.about-brand-hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  background: var(--bg-ribbon);
+  border: 1px solid var(--border-subtle);
+}
+
+.about-logo {
+  width: 84px;
+  height: 84px;
+  object-fit: contain;
+  display: block;
+  flex-shrink: 0;
+  filter: drop-shadow(0 3px 6px rgba(28, 22, 16, 0.16));
+}
+
+.about-brand-copy {
+  min-width: 0;
+}
+
+.about-brand-name {
+  font-family: var(--font-serif);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.about-brand-tagline {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-secondary);
 }
 
 .modal-field {
