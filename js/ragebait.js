@@ -27,6 +27,9 @@
       .replace(/>/g, '&gt;');
   }
 
+  const DEFAULT_CENTER_DODGES = 3;
+  const CENTER_DODGE_COOLDOWN_MS = 160;
+
   function showCenterRagebait(issue = {}) {
     const layer = getLayer();
     const Audio = root.YP.Audio;
@@ -44,13 +47,24 @@
     const msg = escapeHTML(
       issue.message || `Seriously? "${issue.token || 'That'}" is what you decided to type?`
     );
+    let cardDodgesLeft =
+      typeof issue.dodges === 'number' && Number.isFinite(issue.dodges)
+        ? Math.max(0, Math.floor(issue.dodges))
+        : DEFAULT_CENTER_DODGES;
+    let dodgeCount = 0;
+    let lastDodgeAt = 0;
+    let positioned = false;
 
     const card = document.createElement('div');
     card.className = 'center-ragebait-card';
+    card.setAttribute('data-dodges-left', String(cardDodgesLeft));
+    card.setAttribute('data-dodge-count', '0');
     card.innerHTML = `
       <div class="ragebait-header">
         <span class="ragebait-title">🚨 WRITING VIOLATION #${mistakeTotal}: "${token}"</span>
-        <button type="button" class="ragebait-close-x" title="Close">✕</button>
+        <button type="button" class="ragebait-close-x" title="${
+          cardDodgesLeft > 0 ? `Try to close (${cardDodgesLeft} dodges left)` : 'Close'
+        }">✕</button>
       </div>
       <div class="ragebait-body">${msg}</div>
       <div class="ragebait-actions">
@@ -65,15 +79,127 @@
     const fixBtn = card.querySelector('.ragebait-fix-btn');
     const dismissBtn = card.querySelector('.ragebait-dismiss-btn');
 
+    const pickNextSpot = (evt, curLeft, curTop, cardW, cardH, layerRect) => {
+      const layerW = layerRect.width || 862;
+      const layerH = layerRect.height || 694;
+      const padX = 14;
+      const minTop = 76;
+      const padBottom = 40;
+      const minLeft = padX;
+      const maxLeft = Math.max(minLeft, layerW - cardW - padX);
+      const maxTop = Math.max(minTop, layerH - cardH - padBottom);
+      const midTop = (minTop + maxTop) / 2;
+
+      const candidates = [
+        { x: minLeft, y: minTop },
+        { x: maxLeft, y: minTop },
+        { x: minLeft, y: maxTop },
+        { x: maxLeft, y: maxTop },
+        { x: minLeft, y: midTop },
+        { x: maxLeft, y: midTop }
+      ];
+
+      const hasPointer =
+        evt && typeof evt.clientX === 'number' && typeof evt.clientY === 'number' && (evt.clientX !== 0 || evt.clientY !== 0);
+      const ptrX = hasPointer ? evt.clientX - layerRect.left : curLeft + cardW / 2;
+      const ptrY = hasPointer ? evt.clientY - layerRect.top : curTop + cardH / 2;
+
+      const scored = candidates.map((pos) => {
+        const moveDist = Math.hypot(pos.x - curLeft, pos.y - curTop);
+        const ptrCenterDist = Math.hypot(pos.x + cardW / 2 - ptrX, pos.y + cardH / 2 - ptrY);
+        const containsPointer =
+          ptrX >= pos.x - 10 &&
+          ptrX <= pos.x + cardW + 10 &&
+          ptrY >= pos.y - 10 &&
+          ptrY <= pos.y + cardH + 10;
+        const score = moveDist * 0.7 + ptrCenterDist - (containsPointer ? 1000 : 0);
+        return { ...pos, score };
+      });
+
+      scored.sort((a, b) => b.score - a.score);
+      const topChoices = scored.slice(0, Math.min(2, scored.length));
+      return topChoices[Math.floor(Math.random() * topChoices.length)] || scored[0];
+    };
+
+    const dodgeCard = (evt) => {
+      const now = Date.now();
+      const inFlight = now - lastDodgeAt < CENTER_DODGE_COOLDOWN_MS;
+      if (cardDodgesLeft <= 0) return false;
+      if (inFlight) return true;
+
+      const layerRect = layer.getBoundingClientRect();
+      const cardRect = card.getBoundingClientRect();
+      const cardW = cardRect.width || 360;
+      const cardH = cardRect.height || 140;
+      const curLeft = cardRect.width > 0 ? cardRect.left - layerRect.left : ((layerRect.width || 862) - cardW) / 2;
+      const curTop = cardRect.height > 0 ? cardRect.top - layerRect.top : ((layerRect.height || 694) - cardH) / 2;
+
+      if (!positioned) {
+        card.style.left = `${Math.round(curLeft)}px`;
+        card.style.top = `${Math.round(curTop)}px`;
+        card.classList.add('is-dodging');
+        void card.offsetWidth;
+        positioned = true;
+      }
+
+      const next = pickNextSpot(evt, curLeft, curTop, cardW, cardH, layerRect);
+      cardDodgesLeft -= 1;
+      dodgeCount += 1;
+      lastDodgeAt = now;
+
+      card.style.left = `${Math.round(next.x)}px`;
+      card.style.top = `${Math.round(next.y)}px`;
+      card.setAttribute('data-dodges-left', String(cardDodgesLeft));
+      card.setAttribute('data-dodge-count', String(dodgeCount));
+
+      if (cardDodgesLeft > 0) {
+        dismissBtn.textContent =
+          cardDodgesLeft === 2
+            ? 'Too Slow! (2 dodges left)'
+            : cardDodgesLeft === 1
+            ? 'Almost! (1 dodge left)'
+            : `Catch Me! (${cardDodgesLeft} dodges left)`;
+        closeX.title = `Too slow! (${cardDodgesLeft} dodge${cardDodgesLeft === 1 ? '' : 's'} left)`;
+      } else {
+        dismissBtn.textContent = 'Fine. I Accept My Mediocrity';
+        closeX.title = 'Fine, try clicking me now';
+      }
+
+      if (Audio) Audio.playCornerZip();
+      return true;
+    };
+
+    card.addEventListener('mouseenter', (e) => {
+      if (cardDodgesLeft > 0) dodgeCard(e);
+    });
+    card.addEventListener('mousemove', (e) => {
+      if (cardDodgesLeft > 0) dodgeCard(e);
+    });
+    card.addEventListener('mousedown', (e) => {
+      if (cardDodgesLeft > 0 || Date.now() - lastDodgeAt < CENTER_DODGE_COOLDOWN_MS) {
+        e.preventDefault();
+        dodgeCard(e);
+      }
+    });
+
     let xDodged = false;
-    closeX.addEventListener('mouseenter', () => {
+    closeX.addEventListener('mouseenter', (e) => {
+      if (cardDodgesLeft > 0) {
+        dodgeCard(e);
+        return;
+      }
       if (!xDodged) {
         xDodged = true;
         closeX.style.transform = 'translateX(-28px)';
         if (Audio) Audio.playCornerZip();
       }
     });
-    closeX.addEventListener('click', () => {
+    closeX.addEventListener('click', (e) => {
+      if (cardDodgesLeft > 0 || Date.now() - lastDodgeAt < CENTER_DODGE_COOLDOWN_MS) {
+        e.preventDefault();
+        dodgeCard(e);
+        return;
+      }
       card.remove();
       if (centerCardEl === card) centerCardEl = null;
     });
@@ -88,7 +214,21 @@
     fixBtn.addEventListener('mouseenter', dodgeFix);
     fixBtn.addEventListener('click', dodgeFix);
 
-    dismissBtn.addEventListener('click', () => {
+    dismissBtn.addEventListener('mouseenter', (e) => {
+      if (cardDodgesLeft > 0) dodgeCard(e);
+    });
+    dismissBtn.addEventListener('mousedown', (e) => {
+      if (cardDodgesLeft > 0 || Date.now() - lastDodgeAt < CENTER_DODGE_COOLDOWN_MS) {
+        e.preventDefault();
+        dodgeCard(e);
+      }
+    });
+    dismissBtn.addEventListener('click', (e) => {
+      if (cardDodgesLeft > 0 || Date.now() - lastDodgeAt < CENTER_DODGE_COOLDOWN_MS) {
+        e.preventDefault();
+        dodgeCard(e);
+        return;
+      }
       card.remove();
       if (centerCardEl === card) centerCardEl = null;
     });
@@ -277,6 +417,7 @@
   root.YP.Ragebait = {
     SHRINK_STEPS,
     CORNERS,
+    DEFAULT_CENTER_DODGES,
     showCenterRagebait,
     spawnCornerStalker,
     spawnShrinkingError,

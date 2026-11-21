@@ -1213,6 +1213,14 @@ body[data-mood="supportive"] #weather-layer::before,
   animation: popCenter 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.15);
 }
 
+.center-ragebait-card.is-dodging {
+  animation: none;
+  transform: none;
+  transition:
+    top 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.15),
+    left 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+
 .center-ragebait-card::before {
   content: '';
   position: absolute;

@@ -142,4 +142,10 @@ assert.equal(YP.Audio.playSuspenseMusic(5), false, 'playSuspenseMusic should saf
 assert.equal(YP.Audio.playDisappointmentDing(), false, 'playDisappointmentDing should safely no-op in Node');
 YP.Audio.stopSuspenseMusic();
 
+// 7. Ragebait Writing Violation click-avoidance dodge export
+assert.ok(
+  typeof YP.Ragebait.DEFAULT_CENTER_DODGES === 'number' && YP.Ragebait.DEFAULT_CENTER_DODGES >= 1,
+  'YP.Ragebait.DEFAULT_CENTER_DODGES must be a positive number'
+);
+
 console.log('ALL_UNIT_CHECKS_PASSED');
