@@ -7,3 +7,19 @@ __pycache__/
 venv/
 .DS_Store
 *.log
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Node dependencies
+node_modules/
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+
+# OS & editor artifacts
+.DS_Store
+Thumbs.db
