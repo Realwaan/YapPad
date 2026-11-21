@@ -30,8 +30,17 @@
     idle15Fired: false,
     ghostTimer: null,
     supportiveRevertTimer: null,
+    supportiveCountdownTimer: null,
+    supportiveCountdownText: null,
     moodTimer: null,
     telemetryTimer: null,
+    sessionStartedAt: Date.now(),
+    lastEscalationTickAt: 0,
+    scrambleCount: 0,
+    lastScrambleAt: 0,
+    angryWordsSinceScramble: 0,
+    eyeTrackRaf: null,
+    pendingPointer: null,
     seenIssueKeys: new Set(),
     seenIssueStarts: new Set(),
     undoSnapshot: null,
@@ -77,6 +86,9 @@
     }
     state.remembersClose = false;
     state.closeCount = 0;
+    state.scrambleCount = 0;
+    state.angryWordsSinceScramble = 0;
+    state.sessionStartedAt = Date.now();
     updateEscalation();
     setStatusMessage('Oh. You again. (Grudge memory wiped back to Stage 0.)');
     showToast('Grudge memory reset to Stage 0.', 'neutral');
@@ -176,29 +188,96 @@
     showToast(line);
   }
 
+  function setSvgVisible(node, visible) {
+    if (!node) return;
+    if (visible) {
+      node.removeAttribute('hidden');
+    } else {
+      node.setAttribute('hidden', '');
+    }
+  }
+
+  function syncMoodMenuState(moodId) {
+    if (typeof document === 'undefined') return;
+    const items = document.querySelectorAll('.menu-item[data-action="set-mood"]');
+    items.forEach((item) => {
+      const active = item.getAttribute('data-mood') === moodId;
+      item.classList.toggle('is-active', active);
+      item.setAttribute('aria-checked', active ? 'true' : 'false');
+    });
+  }
+
+  function clearSupportiveTimers() {
+    if (state.supportiveRevertTimer) {
+      clearTimeout(state.supportiveRevertTimer);
+      state.supportiveRevertTimer = null;
+    }
+    if (state.supportiveCountdownTimer) {
+      clearInterval(state.supportiveCountdownTimer);
+      state.supportiveCountdownTimer = null;
+    }
+    state.supportiveCountdownText = null;
+  }
+
+  function restartMoodTimer() {
+    if (state.moodTimer) {
+      clearInterval(state.moodTimer);
+      state.moodTimer = null;
+    }
+    state.moodTimer = setInterval(() => {
+      const Moods = root.YP.Moods;
+      if (!Moods || state.mood === 'supportive') return;
+      const next = Moods.rollRandomMood(state.mood, state.escalation);
+      setMood(next, true);
+      if (next === 'angry' && state.words >= 3) {
+        triggerAngryWordScramble();
+      }
+    }, 55000);
+  }
+
   function updateWeatherLayer() {
     const layer = el('weather-layer');
     if (!layer) return;
     layer.innerHTML = '';
+    layer.classList.remove('weather-rain', 'weather-sparkles');
 
     if (state.mood === 'sad') {
-      for (let i = 0; i < 22; i++) {
+      layer.classList.add('weather-rain');
+      layer.setAttribute('data-weather', 'rain');
+      const frag = document.createDocumentFragment();
+      for (let i = 0; i < 28; i++) {
         const drop = document.createElement('div');
         drop.className = 'rain-drop';
-        drop.style.left = `${(i * 4.5 + (i % 3) * 2) % 98}%`;
-        drop.style.animationDuration = `${0.9 + (i % 5) * 0.18}s`;
-        drop.style.animationDelay = `${(i % 7) * 0.15}s`;
-        layer.appendChild(drop);
+        drop.style.left = `${(i * 3.55 + (i % 3) * 1.4) % 98}%`;
+        drop.style.height = `${18 + (i % 5) * 5}px`;
+        drop.style.animationDuration = `${0.85 + (i % 5) * 0.16}s`;
+        drop.style.animationDelay = `${-((i % 9) * 0.18).toFixed(2)}s`;
+        drop.style.setProperty('--drop-opacity', (0.38 + (i % 4) * 0.1).toFixed(2));
+        frag.appendChild(drop);
       }
+      layer.appendChild(frag);
     } else if (state.mood === 'supportive') {
-      for (let i = 0; i < 14; i++) {
-        const sp = document.createElement('div');
+      layer.classList.add('weather-sparkles');
+      layer.setAttribute('data-weather', 'sparkles');
+      const frag = document.createDocumentFragment();
+      const glyphs = ['✦', '✧', '⋆', '✨'];
+      const colors = ['#d49b1a', '#2b7a52', '#e37e88', '#e8a823'];
+      for (let i = 0; i < 20; i++) {
+        const sp = document.createElement('span');
         sp.className = 'sparkle-dot';
-        sp.style.left = `${8 + (i * 6.5) % 86}%`;
-        sp.style.top = `${14 + (i * 17) % 72}%`;
-        sp.style.animationDelay = `${(i % 6) * 0.3}s`;
-        layer.appendChild(sp);
+        sp.textContent = glyphs[i % glyphs.length];
+        sp.style.left = `${6 + (i * 4.7) % 88}%`;
+        sp.style.top = `${12 + (i * 19) % 74}%`;
+        sp.style.fontSize = `${11 + (i % 4) * 2.5}px`;
+        sp.style.animationDuration = `${1.9 + (i % 4) * 0.35}s`;
+        sp.style.animationDelay = `${-((i % 7) * 0.32).toFixed(2)}s`;
+        sp.style.setProperty('--sparkle-color', colors[i % colors.length]);
+        sp.style.setProperty('--drift-x', `${(i % 2 === 0 ? 1 : -1) * (8 + (i % 4) * 3)}px`);
+        frag.appendChild(sp);
       }
+      layer.appendChild(frag);
+    } else {
+      layer.setAttribute('data-weather', 'none');
     }
   }
 
@@ -206,11 +285,17 @@
     const Moods = root.YP.Moods;
     if (!Moods) return;
     const face = Moods.getFaceState(state.mood, state.escalation);
+    const svg = el('yappad-face');
     const browL = el('brow-left');
     const browR = el('brow-right');
     const mouth = el('face-mouth');
     const pupilL = el('pupil-left');
     const pupilR = el('pupil-right');
+
+    if (svg) {
+      if (face.ariaLabel) svg.setAttribute('aria-label', face.ariaLabel);
+      svg.setAttribute('data-anim', face.animation || 'none');
+    }
 
     if (browL && face.browLeft) {
       browL.setAttribute('x1', face.browLeft.x1);
@@ -229,15 +314,25 @@
     }
     if (pupilL && face.pupilRadius) pupilL.setAttribute('r', face.pupilRadius);
     if (pupilR && face.pupilRadius) pupilR.setAttribute('r', face.pupilRadius);
+
+    const extras = face.extras || {};
+    setSvgVisible(el('face-blush-left'), Boolean(extras.blush));
+    setSvgVisible(el('face-blush-right'), Boolean(extras.blush));
+    setSvgVisible(el('face-monocle'), Boolean(extras.monocle));
+    setSvgVisible(el('face-tear'), Boolean(extras.tear));
+    setSvgVisible(el('face-anger-vein'), Boolean(extras.angerVein));
   }
 
   function updateEscalation() {
     const Moods = root.YP.Moods;
     if (!Moods) return;
+    const elapsedSec = Math.max(0, Math.floor((Date.now() - state.sessionStartedAt) / 1000));
     const stageObj = Moods.computeEscalationStage({
       errors: state.errors,
       backspaces: state.backspaces,
-      closeCount: state.closeCount
+      closeCount: state.closeCount,
+      elapsedSec,
+      scrambles: state.scrambleCount
     });
     state.escalation = stageObj.stage;
     if (typeof document !== 'undefined' && document.body) {
@@ -253,12 +348,10 @@
     const Audio = root.YP.Audio;
     if (!Moods || !Moods.MOODS[nextMood]) return;
 
-    if (state.supportiveRevertTimer) {
-      clearTimeout(state.supportiveRevertTimer);
-      state.supportiveRevertTimer = null;
-    }
+    clearSupportiveTimers();
 
     state.mood = nextMood;
+    state.angryWordsSinceScramble = 0;
     const info = Moods.MOODS[nextMood];
 
     if (typeof document !== 'undefined' && document.body) {
@@ -267,24 +360,57 @@
     const moodStat = el('stat-mood');
     if (moodStat) moodStat.textContent = info.label;
 
+    syncMoodMenuState(nextMood);
     updateWeatherLayer();
     updateFaceExpression();
 
+    if (Audio) {
+      if (nextMood === 'supportive') Audio.playSupportiveChime();
+      else if (nextMood === 'angry') Audio.playAngryBuzz();
+      else if (nextMood === 'sad' && announce) Audio.playSigh();
+      else if (nextMood === 'intellectual' && announce) Audio.playDisappointmentDing();
+      else if (nextMood === 'dramatic' && announce) Audio.playGuiltPop();
+    }
+
+    if (announce) {
+      let line = Moods.getLine(nextMood, 'greeting');
+      if (nextMood === 'intellectual') {
+        const textarea = el('editor-textarea');
+        const words = textarea ? [...textarea.value.matchAll(/\b([a-zA-Z]{4,})\b/g)] : [];
+        if (words.length > 0) {
+          const citedWord = words[words.length - 1][1];
+          line = `${line} ${Moods.makeFakeCitation(citedWord)}`;
+        }
+      }
+      addCommentary(`Mood shifted to ${info.label}: ${line}`, { tag: 'Mood Shift' });
+    }
+
     if (nextMood === 'supportive') {
-      if (Audio) Audio.playSupportiveChime();
+      const durationSec = info.durationSec || 10;
+      let remaining = durationSec;
+      state.supportiveCountdownText = `🥰 Supportive mode active — reverting in ${remaining}s...`;
+      setStatusMessage(state.supportiveCountdownText);
+
+      state.supportiveCountdownTimer = setInterval(() => {
+        remaining -= 1;
+        if (remaining <= 0) return;
+        const statusEl = el('status-message');
+        if (statusEl && statusEl.textContent === state.supportiveCountdownText) {
+          state.supportiveCountdownText = `🥰 Supportive mode active — reverting in ${remaining}s...`;
+          setStatusMessage(state.supportiveCountdownText);
+        }
+      }, 1000);
+
       state.supportiveRevertTimer = setTimeout(() => {
+        clearSupportiveTimers();
+        if (state.mood !== 'supportive') return;
         setMood('passive-aggressive', false);
         addCommentary('Supportive mode expired (10s limit reached). Back to judging your life choices.', {
           tag: 'Mood Shift'
         });
-      }, (info.durationSec || 10) * 1000);
-    } else if (nextMood === 'angry' && Audio) {
-      Audio.playAngryBuzz();
-    }
-
-    if (announce) {
-      const line = Moods.getLine(nextMood, 'greeting');
-      addCommentary(`Mood shifted to ${info.label}: ${line}`, { tag: 'Mood Shift' });
+      }, durationSec * 1000);
+    } else if (state.moodTimer) {
+      restartMoodTimer();
     }
   }
 
@@ -295,34 +421,58 @@
     if (!textarea) return false;
 
     const text = textarea.value;
-    const matches = [...text.matchAll(/\b([a-zA-Z]{4,})\b/g)];
+    let matches = [...text.matchAll(/\b([a-zA-Z]{4,})\b/g)];
     if (matches.length === 0) {
-      addCommentary('I wanted to scramble one of your words in anger, but you haven\'t even typed a 4-letter word yet!', {
+      matches = [...text.matchAll(/\b([a-zA-Z]{3,})\b/g)];
+    }
+
+    const eligible = matches.filter((m) => {
+      const candidate = Moods && Moods.scrambleWord ? Moods.scrambleWord(m[0]) : m[0];
+      return candidate !== m[0];
+    });
+
+    if (eligible.length === 0) {
+      addCommentary('I wanted to scramble one of your words in anger, but you haven\'t even typed a scrambleable word yet!', {
         tag: '😡 Angry Scrambler'
       });
       return false;
     }
 
     state.undoSnapshot = text;
-    const target = matches[matches.length - 1];
+    const prevSelStart = textarea.selectionStart;
+    const prevSelEnd = textarea.selectionEnd;
+    const target = eligible[eligible.length - 1];
     const word = target[0];
     const start = target.index;
-    const chars = word.split('');
-    // Deterministic visible scramble
-    const scrambled =
-      chars[0] +
-      chars
-        .slice(1, -1)
-        .reverse()
-        .join('') +
-      chars[chars.length - 1];
-    const finalWord = scrambled === word ? word.split('').reverse().join('') : scrambled;
+    const finalWord =
+      Moods && typeof Moods.scrambleWord === 'function'
+        ? Moods.scrambleWord(word)
+        : word.split('').reverse().join('');
 
     textarea.value = text.slice(0, start) + finalWord + text.slice(start + word.length);
+    try {
+      textarea.setSelectionRange(prevSelStart, prevSelEnd);
+    } catch {
+      // Ignore selection restoration errors
+    }
+
+    state.lastScrambleAt = Date.now();
+    state.scrambleCount += 1;
+    state.angryWordsSinceScramble = 0;
+
+    const stageEl = el('editor-stage');
+    if (stageEl) {
+      stageEl.classList.remove('angry-flash');
+      void stageEl.offsetWidth;
+      stageEl.classList.add('angry-flash');
+      setTimeout(() => stageEl.classList.remove('angry-flash'), 600);
+    }
+
     if (Audio) Audio.playAngryBuzz();
 
     runGrammarCheck(false);
     updateLineNumbersAndCounts();
+    updateEscalation();
 
     const apology = Moods
       ? Moods.getLine('angry', 'scrambleApology')
@@ -582,6 +732,12 @@
     if (idleMs >= 15000 && !state.idle15Fired && !state.ghostTimer) {
       state.idle15Fired = true;
       startGhostwriting();
+    }
+
+    // 5. Periodic time-based escalation check (every 5s)
+    if (now - state.lastEscalationTickAt >= 5000) {
+      state.lastEscalationTickAt = now;
+      updateEscalation();
     }
   }
 
@@ -952,6 +1108,20 @@
       state.lastKeyAt = Date.now();
       runGrammarCheck(true);
       updateLineNumbersAndCounts();
+
+      // In Angry mood, scramble a recent completed word after every 3 words (10s cooldown)
+      if (state.mood === 'angry') {
+        const pos = textarea.selectionStart || 0;
+        if (pos > 0 && /[\s.,!?;:]$/.test(textarea.value.slice(0, pos))) {
+          state.angryWordsSinceScramble += 1;
+          if (
+            state.angryWordsSinceScramble >= 3 &&
+            Date.now() - state.lastScrambleAt >= 10000
+          ) {
+            triggerAngryWordScramble();
+          }
+        }
+      }
     });
 
     // Global keyboard shortcuts
@@ -977,24 +1147,56 @@
         }
       });
 
-      // Eye-tracking pupils
-      window.addEventListener('mousemove', (e) => {
+      // Eye-tracking pupils (rAF-throttled)
+      const applyPupilGaze = (clientX, clientY) => {
         const face = el('yappad-face');
         const pL = el('pupil-left');
         const pR = el('pupil-right');
         if (!face || !pL || !pR) return;
         const rect = face.getBoundingClientRect();
+        if (!rect || rect.width <= 0 || rect.height <= 0) return;
         const cx = rect.left + rect.width / 2;
         const cy = rect.top + rect.height / 2;
-        const angle = Math.atan2(e.clientY - cy, e.clientX - cx);
-        const dist = Math.min(1.4, Math.hypot(e.clientX - cx, e.clientY - cy) / 90);
+        const angle = Math.atan2(clientY - cy, clientX - cx);
+        const dist = Math.min(1.4, Math.hypot(clientX - cx, clientY - cy) / 90);
         const dx = Math.cos(angle) * dist;
         const dy = Math.sin(angle) * dist;
         pL.setAttribute('cx', (8.5 + dx).toFixed(2));
         pL.setAttribute('cy', (10.5 + dy).toFixed(2));
         pR.setAttribute('cx', (15.5 + dx).toFixed(2));
         pR.setAttribute('cy', (10.5 + dy).toFixed(2));
+      };
+
+      window.addEventListener('mousemove', (e) => {
+        state.pendingPointer = { x: e.clientX, y: e.clientY };
+        if (typeof window.requestAnimationFrame === 'function') {
+          if (state.eyeTrackRaf) return;
+          state.eyeTrackRaf = window.requestAnimationFrame(() => {
+            state.eyeTrackRaf = null;
+            if (state.pendingPointer) {
+              applyPupilGaze(state.pendingPointer.x, state.pendingPointer.y);
+            }
+          });
+        } else {
+          applyPupilGaze(e.clientX, e.clientY);
+        }
       });
+
+      if (typeof document !== 'undefined' && document.documentElement) {
+        document.documentElement.addEventListener('mouseleave', () => {
+          state.pendingPointer = null;
+          const pL = el('pupil-left');
+          const pR = el('pupil-right');
+          if (pL) {
+            pL.setAttribute('cx', '8.5');
+            pL.setAttribute('cy', '10.5');
+          }
+          if (pR) {
+            pR.setAttribute('cx', '15.5');
+            pR.setAttribute('cy', '10.5');
+          }
+        });
+      }
 
       window.addEventListener('beforeunload', (e) => {
         if (state.dirty) {
@@ -1007,9 +1209,11 @@
 
   function init() {
     if (typeof document === 'undefined') return;
+    state.sessionStartedAt = Date.now();
     loadGrudgeState();
     wireMenusAndControls();
     wireEditorEvents();
+    syncMoodMenuState(state.mood);
     updateAIBadge();
     updateEscalation();
     updateFaceExpression();
@@ -1022,15 +1226,7 @@
     }
 
     state.telemetryTimer = setInterval(tickTelemetry, 450);
-    state.moodTimer = setInterval(() => {
-      const Moods = root.YP.Moods;
-      if (!Moods) return;
-      const next = Moods.rollRandomMood(state.mood);
-      setMood(next, true);
-      if (next === 'angry' && state.words >= 3) {
-        triggerAngryWordScramble();
-      }
-    }, 55000);
+    restartMoodTimer();
   }
 
   if (typeof document !== 'undefined') {

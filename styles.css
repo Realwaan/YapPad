@@ -107,18 +107,70 @@ body[data-mood="supportive"] {
   --accent-ink: hsl(150, 64%, 21%);
 }
 
+body[data-escalation="0"] {
+  --escalation-ring: transparent;
+  --escalation-vignette: transparent;
+}
+
+body[data-escalation="1"] {
+  --escalation-ring: hsla(35, 88%, 42%, 0.3);
+  --escalation-vignette: hsla(35, 88%, 42%, 0.03);
+}
+
 body[data-escalation="2"] {
   --border-subtle: hsl(20, 26%, 78%);
+  --escalation-ring: hsla(24, 80%, 44%, 0.5);
+  --escalation-vignette: hsla(24, 80%, 44%, 0.055);
 }
 
 body[data-escalation="3"] {
   --border-subtle: hsl(10, 36%, 74%);
   --bg-desktop: hsl(14, 24%, 87%);
+  --escalation-ring: hsla(4, 76%, 48%, 0.68);
+  --escalation-vignette: hsla(4, 76%, 48%, 0.085);
 }
 
 body[data-escalation="4"] {
   --border-subtle: hsl(4, 48%, 68%);
   --bg-desktop: hsl(6, 28%, 84%);
+  --escalation-ring: var(--danger);
+  --escalation-vignette: hsla(4, 76%, 48%, 0.13);
+}
+
+body[data-escalation="1"] .window-titlebar {
+  box-shadow: inset 0 -1px 0 var(--escalation-ring);
+}
+
+body[data-escalation="2"] .window-titlebar,
+body[data-escalation="3"] .window-titlebar {
+  box-shadow: inset 0 -2px 0 var(--escalation-ring);
+}
+
+body[data-escalation="4"] .window-titlebar {
+  box-shadow: inset 0 -3px 0 var(--escalation-ring);
+}
+
+body[data-escalation="2"] #editor-stage,
+body[data-escalation="3"] #editor-stage,
+body[data-escalation="4"] #editor-stage {
+  box-shadow: inset 0 0 28px var(--escalation-vignette);
+}
+
+body[data-escalation="3"] #stat-escalation {
+  color: var(--warning);
+}
+
+body[data-escalation="4"] #stat-escalation {
+  color: var(--danger);
+}
+
+body[data-escalation="4"]:not([data-mood="supportive"]) .face-badge {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 2px hsla(4, 76%, 48%, 0.22);
+}
+
+body[data-mood="supportive"] #editor-stage {
+  box-shadow: inset 0 0 32px hsla(150, 56%, 34%, 0.08);
 }
 
 * {
@@ -337,6 +389,17 @@ html, body {
 .menu-item:hover {
   background: var(--accent-soft);
   color: var(--accent-ink);
+}
+
+.menu-item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+
+.menu-item.is-active .menu-shortcut {
+  color: var(--accent-ink);
+  font-weight: 600;
 }
 
 .menu-shortcut {
@@ -672,6 +735,88 @@ html, body {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, background-color 0.25s ease;
+}
+
+#yappad-face {
+  display: block;
+  overflow: visible;
+}
+
+@keyframes ypFaceTremble {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  25% { transform: translate3d(-0.7px, 0.35px, 0); }
+  50% { transform: translate3d(0.7px, -0.35px, 0); }
+  75% { transform: translate3d(-0.5px, -0.25px, 0); }
+}
+
+@keyframes ypFaceBounce {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(0, -1.4px, 0) scale(1.05); }
+}
+
+@keyframes ypFaceDroop {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, 0.85px, 0); }
+}
+
+@keyframes ypTearDrip {
+  0%, 100% { transform: translateY(0); opacity: 0.95; }
+  75% { transform: translateY(1.3px); opacity: 0.95; }
+  92% { transform: translateY(1.9px); opacity: 0.35; }
+}
+
+@keyframes ypVeinPulse {
+  0%, 100% { transform: scale(1); opacity: 0.95; }
+  50% { transform: scale(1.12); opacity: 1; }
+}
+
+#yappad-face[data-anim="tremble"] {
+  animation: ypFaceTremble 0.28s linear infinite;
+}
+
+#yappad-face[data-anim="bounce"] {
+  animation: ypFaceBounce 1.25s ease-in-out infinite;
+}
+
+#yappad-face[data-anim="droop"] {
+  animation: ypFaceDroop 2.7s ease-in-out infinite;
+}
+
+.face-blush {
+  fill: rgba(235, 110, 134, 0.52);
+}
+
+.face-pupil {
+  transition: cx 0.06s linear, cy 0.06s linear, r 0.18s ease;
+}
+
+.face-monocle circle,
+.face-monocle path {
+  fill: none;
+  stroke: hsl(39, 68%, 34%);
+  stroke-width: 1;
+  stroke-linecap: round;
+}
+
+.face-tear {
+  fill: #4c8cd1;
+  stroke: #2c5b8c;
+  stroke-width: 0.5;
+  transform-origin: 17.6px 14px;
+  animation: ypTearDrip 1.9s ease-in-out infinite;
+}
+
+.face-anger-vein path {
+  fill: none;
+  stroke: var(--danger);
+  stroke-width: 1.1;
+  stroke-linecap: round;
+}
+
+.face-anger-vein {
+  transform-origin: 18px 5.4px;
+  animation: ypVeinPulse 0.7s ease-in-out infinite;
 }
 
 .status-message {
@@ -692,6 +837,16 @@ html, body {
   flex-shrink: 0;
 }
 
+/* Angry word scramble flash */
+@keyframes ypAngryFlash {
+  0% { box-shadow: inset 0 0 0 2px hsla(4, 80%, 44%, 0.7), inset 0 0 36px hsla(4, 80%, 44%, 0.22); }
+  100% { box-shadow: inset 0 0 28px var(--escalation-vignette, transparent); }
+}
+
+#editor-stage.angry-flash {
+  animation: ypAngryFlash 0.55s ease-out;
+}
+
 /* Weather Layer (Sad Rain & Supportive Sparkles) */
 #weather-layer {
   position: absolute;
@@ -701,31 +856,93 @@ html, body {
   z-index: 15;
 }
 
+body[data-mood="sad"] #weather-layer::before,
+#weather-layer.weather-rain::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(56, 98, 145, 0.14) 0%,
+    rgba(56, 98, 145, 0.04) 50%,
+    rgba(56, 98, 145, 0.09) 100%
+  );
+  pointer-events: none;
+}
+
 .rain-drop {
   position: absolute;
-  top: -20px;
-  width: 1.5px;
-  height: 16px;
-  background: rgba(70, 120, 180, 0.35);
+  top: -32px;
+  width: 1.6px;
+  height: 24px;
+  border-radius: 999px;
+  background: linear-gradient(
+    180deg,
+    rgba(64, 112, 168, 0) 0%,
+    rgba(64, 112, 168, 0.5) 55%,
+    rgba(88, 138, 194, 0.78) 100%
+  );
+  will-change: transform, opacity;
   animation: rainFall linear infinite;
 }
 
 @keyframes rainFall {
-  to { transform: translateY(760px); }
+  0% {
+    transform: translate3d(0, 0, 0) rotate(9deg);
+    opacity: 0;
+  }
+  12% {
+    opacity: var(--drop-opacity, 0.6);
+  }
+  88% {
+    opacity: var(--drop-opacity, 0.6);
+  }
+  100% {
+    transform: translate3d(-42px, 780px, 0) rotate(9deg);
+    opacity: 0;
+  }
+}
+
+body[data-mood="supportive"] #weather-layer::before,
+#weather-layer.weather-sparkles::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse at 50% 0%,
+    rgba(248, 221, 120, 0.24) 0%,
+    rgba(130, 206, 155, 0.08) 48%,
+    rgba(255, 255, 255, 0) 80%
+  );
+  pointer-events: none;
 }
 
 .sparkle-dot {
   position: absolute;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: hsl(44, 90%, 55%);
+  line-height: 1;
+  font-size: 14px;
+  color: var(--sparkle-color, hsl(42, 86%, 46%));
+  text-shadow: 0 0 8px rgba(244, 196, 66, 0.65);
+  will-change: transform, opacity;
   animation: sparkleFloat 2.4s ease-in-out infinite;
 }
 
 @keyframes sparkleFloat {
-  0%, 100% { opacity: 0.2; transform: scale(0.7) translateY(0); }
-  50% { opacity: 0.9; transform: scale(1.25) translateY(-10px); }
+  0% { opacity: 0; transform: translate3d(0, 12px, 0) scale(0.5) rotate(0deg); }
+  30% { opacity: 0.92; }
+  65% { opacity: 0.85; transform: translate3d(var(--drift-x, 10px), -18px, 0) scale(1.15) rotate(22deg); }
+  100% { opacity: 0; transform: translate3d(calc(var(--drift-x, 10px) * 1.4), -42px, 0) scale(0.45) rotate(44deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rain-drop,
+  .sparkle-dot,
+  #yappad-face[data-anim],
+  .face-tear,
+  .face-anger-vein,
+  #editor-stage.angry-flash {
+    animation: none !important;
+  }
 }
 
 /* Ragebait Overlay Layer */
