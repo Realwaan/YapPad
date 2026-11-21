@@ -762,111 +762,216 @@
   function openAISettingsModal() {
     const AI = YP.AI;
     const App = YP.App;
-    const cfg = AI
-      ? AI.getConfig()
-      : {
-          provider: 'offline',
-          apiKey: '',
-          geminiModel: 'gemini-2.5-flash',
-          openaiModel: 'gpt-4o-mini'
-        };
-    const activeModel = cfg.provider === 'openai' ? cfg.openaiModel : cfg.geminiModel;
+    const defaultGemini = (AI && AI.DEFAULT_GEMINI_MODEL) || 'gemini-2.5-flash';
+    const defaultOpenai = (AI && AI.DEFAULT_OPENAI_MODEL) || 'gpt-4o-mini';
+    const cfg =
+      AI && typeof AI.getConfig === 'function'
+        ? AI.getConfig()
+        : {
+            provider: 'offline',
+            apiKey: '',
+            geminiModel: defaultGemini,
+            openaiModel: defaultOpenai
+          };
+
+    let draftGeminiModel = cfg.geminiModel || defaultGemini;
+    let draftOpenaiModel = cfg.openaiModel || defaultOpenai;
+    let testRunId = 0;
 
     const card = open({
       title: '🧠 Configure AI Brain (Gemini / OpenAI / Offline)',
       dismissible: true,
       bodyHTML: `
         <p class="modal-paragraph">
-          YapPad roasts your writing every ~30 words (or via <code>Ctrl+J</code>). Any cloud failure automatically falls back to the 0ms Offline Critic.
+          YapPad evaluates your writing every ~30 words (or via <code>Ctrl+J</code>) using your active mood and live telemetry. Cloud calls time out after 12s and fall back automatically to the 0ms Offline Critic.
         </p>
         <div class="modal-field">
           <label for="ai-provider-select">AI Critic Provider</label>
           <select id="ai-provider-select" class="modal-select">
-            <option value="offline" ${cfg.provider === 'offline' ? 'selected' : ''}>Built-in Contextual Offline Critic (0ms, No Key Needed)</option>
-            <option value="gemini" ${cfg.provider === 'gemini' ? 'selected' : ''}>Google Gemini API (gemini-2.5-flash)</option>
-            <option value="openai" ${cfg.provider === 'openai' ? 'selected' : ''}>OpenAI API (gpt-4o-mini)</option>
+            <option value="offline">Built-in Contextual Offline Critic (0ms, No Key Needed)</option>
+            <option value="gemini">Google Gemini API (${escapeHTML(defaultGemini)})</option>
+            <option value="openai">OpenAI API (${escapeHTML(defaultOpenai)})</option>
           </select>
         </div>
         <div class="modal-field">
-          <label for="ai-api-key-input">API Key (Stored in browser localStorage only)</label>
-          <input id="ai-api-key-input" class="modal-input" type="password" placeholder="AIza... or sk-..." value="${escapeHTML(cfg.apiKey || '')}" />
+          <label for="ai-api-key-input">API Key</label>
+          <div class="ai-key-group">
+            <input id="ai-api-key-input" class="modal-input" type="password" autocomplete="off" spellcheck="false" />
+            <button id="ai-key-toggle" type="button" class="ai-key-toggle" aria-pressed="false">Show</button>
+          </div>
+          <span class="ai-field-hint">Stored only in browser localStorage (<code>yp_ai_config</code>). Never sent anywhere except your selected provider.</span>
         </div>
         <div class="modal-field">
-          <label for="ai-model-input">Model Name</label>
-          <input id="ai-model-input" class="modal-input" type="text" value="${escapeHTML(activeModel || '')}" />
+          <label for="ai-model-input">Model Override</label>
+          <input id="ai-model-input" class="modal-input" type="text" autocomplete="off" spellcheck="false" />
+          <span id="ai-model-hint" class="ai-field-hint"></span>
         </div>
-        <p id="ai-test-status" class="modal-paragraph" style="min-height: 20px;"></p>
+        <div id="ai-test-status" class="ai-test-status is-idle" role="status" aria-live="polite"></div>
       `,
       buttons: [
         { id: 'ai-btn-cancel', label: 'Close' },
-        {
-          id: 'ai-btn-test',
-          label: 'Test Connection',
-          closeOnClick: false,
-          onClick: async (_, ctx) => {
-            if (!AI || !ctx.card) return false;
-            const sel = ctx.card.querySelector('#ai-provider-select');
-            const keyInput = ctx.card.querySelector('#ai-api-key-input');
-            const modelInput = ctx.card.querySelector('#ai-model-input');
-            const statusEl = ctx.card.querySelector('#ai-test-status');
-            if (!sel || !keyInput || !modelInput || !statusEl) return false;
-
-            statusEl.textContent = 'Testing connection...';
-            const draft = {
-              provider: sel.value,
-              apiKey: keyInput.value.trim(),
-              geminiModel: sel.value === 'gemini' ? modelInput.value.trim() : cfg.geminiModel,
-              openaiModel: sel.value === 'openai' ? modelInput.value.trim() : cfg.openaiModel
-            };
-            const res = await AI.testConnection(draft);
-            statusEl.style.color = res.ok ? 'var(--success)' : 'var(--danger)';
-            statusEl.textContent = res.message;
-            return false;
-          }
-        },
-        {
-          id: 'ai-btn-save',
-          label: 'Save Settings',
-          primary: true,
-          closeOnClick: false,
-          onClick: (_, ctx) => {
-            if (!ctx.card) return false;
-            const sel = ctx.card.querySelector('#ai-provider-select');
-            const keyInput = ctx.card.querySelector('#ai-api-key-input');
-            const modelInput = ctx.card.querySelector('#ai-model-input');
-            if (AI && sel && keyInput && modelInput) {
-              const saved = AI.saveConfig({
-                provider: sel.value,
-                apiKey: keyInput.value.trim(),
-                geminiModel:
-                  sel.value === 'gemini'
-                    ? modelInput.value.trim() || 'gemini-2.5-flash'
-                    : cfg.geminiModel,
-                openaiModel:
-                  sel.value === 'openai'
-                    ? modelInput.value.trim() || 'gpt-4o-mini'
-                    : cfg.openaiModel
-              });
-              if (App && typeof App.updateAIBadge === 'function') {
-                App.updateAIBadge(saved);
-              }
-            }
-            close();
-            return false;
-          }
-        }
+        { id: 'ai-btn-test', label: 'Test Connection', closeOnClick: false },
+        { id: 'ai-btn-save', label: 'Save Settings', primary: true, closeOnClick: false }
       ]
     });
     if (!card) return;
 
     const sel = card.querySelector('#ai-provider-select');
+    const keyInput = card.querySelector('#ai-api-key-input');
+    const keyToggle = card.querySelector('#ai-key-toggle');
     const modelInput = card.querySelector('#ai-model-input');
-    if (sel && modelInput) {
-      sel.addEventListener('change', () => {
-        if (sel.value === 'openai') modelInput.value = cfg.openaiModel || 'gpt-4o-mini';
-        else if (sel.value === 'gemini') modelInput.value = cfg.geminiModel || 'gemini-2.5-flash';
-      });
-    }
+    const modelHint = card.querySelector('#ai-model-hint');
+    const statusEl = card.querySelector('#ai-test-status');
+    const testBtn = card.querySelector('#ai-btn-test');
+    const saveBtn = card.querySelector('#ai-btn-save');
+
+    // Populate values via DOM properties (never raw HTML interpolation) to prevent XSS
+    sel.value = ['offline', 'gemini', 'openai'].includes(cfg.provider) ? cfg.provider : 'offline';
+    keyInput.value = cfg.apiKey || '';
+
+    const setStatusBox = (stateClass, headline, sampleText) => {
+      statusEl.className = `ai-test-status ${stateClass}`;
+      statusEl.innerHTML = '';
+      const msgEl = document.createElement('div');
+      msgEl.className = 'ai-test-status-msg';
+      msgEl.textContent = headline;
+      statusEl.appendChild(msgEl);
+      if (sampleText) {
+        const sampleEl = document.createElement('div');
+        sampleEl.className = 'ai-test-status-sample';
+        sampleEl.textContent = `“${sampleText}”`;
+        statusEl.appendChild(sampleEl);
+      }
+    };
+
+    const syncProviderFields = (provider) => {
+      const isOffline = provider === 'offline';
+      keyInput.disabled = isOffline;
+      keyToggle.disabled = isOffline;
+      modelInput.disabled = isOffline;
+
+      if (provider === 'gemini') {
+        keyInput.placeholder = 'AIza... (Google AI Studio API key)';
+        modelInput.placeholder = defaultGemini;
+        modelInput.value = draftGeminiModel;
+        modelHint.textContent = `Default: ${defaultGemini}. Override with any Gemini generateContent model ID.`;
+      } else if (provider === 'openai') {
+        keyInput.placeholder = 'sk-... (OpenAI API key)';
+        modelInput.placeholder = defaultOpenai;
+        modelInput.value = draftOpenaiModel;
+        modelHint.textContent = `Default: ${defaultOpenai}. Override with any OpenAI chat completions model ID.`;
+      } else {
+        keyInput.placeholder = 'Not required in Offline Critic mode';
+        modelInput.placeholder = 'offline-critic';
+        modelInput.value = 'offline-critic';
+        modelHint.textContent =
+          'Runs locally at 0ms with mood-styled roasts and academic citations in Intellectual mood.';
+      }
+    };
+
+    const readDraftConfig = () => {
+      const provider = sel.value;
+      const typedModel = modelInput.value.trim();
+      if (provider === 'gemini') {
+        draftGeminiModel = typedModel || defaultGemini;
+      } else if (provider === 'openai') {
+        draftOpenaiModel = typedModel || defaultOpenai;
+      }
+      return {
+        provider,
+        apiKey: keyInput.value.trim(),
+        geminiModel: draftGeminiModel,
+        openaiModel: draftOpenaiModel
+      };
+    };
+
+    keyToggle.addEventListener('click', () => {
+      const reveal = keyInput.type === 'password';
+      keyInput.type = reveal ? 'text' : 'password';
+      keyToggle.textContent = reveal ? 'Hide' : 'Show';
+      keyToggle.setAttribute('aria-pressed', reveal ? 'true' : 'false');
+    });
+
+    modelInput.addEventListener('input', () => {
+      if (sel.value === 'gemini') draftGeminiModel = modelInput.value;
+      else if (sel.value === 'openai') draftOpenaiModel = modelInput.value;
+    });
+
+    sel.addEventListener('change', () => {
+      syncProviderFields(sel.value);
+      setStatusBox('is-idle', 'Click Test Connection to verify or Save Settings to apply.');
+    });
+
+    syncProviderFields(sel.value);
+    const activeLabel =
+      AI && typeof AI.getProviderLabel === 'function' ? AI.getProviderLabel(cfg.provider) : cfg.provider;
+    const activeModel =
+      AI && typeof AI.getActiveModel === 'function' ? AI.getActiveModel(cfg) : cfg.provider;
+    setStatusBox('is-idle', `Active: ${activeLabel} (${activeModel}).`);
+
+    testBtn.addEventListener('click', async () => {
+      if (!AI || typeof AI.testConnection !== 'function') {
+        setStatusBox('is-error', 'YP.AI.testConnection() is unavailable.');
+        return;
+      }
+      const runId = (testRunId += 1);
+      const draft = readDraftConfig();
+      const label =
+        typeof AI.getProviderLabel === 'function' ? AI.getProviderLabel(draft.provider) : draft.provider;
+      const model =
+        typeof AI.getActiveModel === 'function' ? AI.getActiveModel(draft) : draft.provider;
+
+      testBtn.disabled = true;
+      testBtn.textContent = 'Testing...';
+      setStatusBox('is-loading', `Testing ${label} (${model})...`);
+
+      try {
+        const res = await AI.testConnection(draft);
+        if (!card.isConnected || runId !== testRunId) return;
+        setStatusBox(
+          res && res.ok ? 'is-ok' : 'is-error',
+          (res && res.message) || (res && res.ok ? 'Connection succeeded.' : 'Connection failed.'),
+          res && res.sample ? res.sample : ''
+        );
+      } catch (err) {
+        if (!card.isConnected || runId !== testRunId) return;
+        setStatusBox(
+          'is-error',
+          `Connection test error: ${(err && err.message) || 'Unexpected error'}`
+        );
+      } finally {
+        if (card.isConnected && runId === testRunId) {
+          testBtn.disabled = false;
+          testBtn.textContent = 'Test Connection';
+        }
+      }
+    });
+
+    saveBtn.addEventListener('click', () => {
+      const draft = readDraftConfig();
+      const saved = AI && typeof AI.saveConfig === 'function' ? AI.saveConfig(draft) : draft;
+      if (App) {
+        if (typeof App.updateAIBadge === 'function') {
+          App.updateAIBadge(saved);
+        }
+        const label =
+          AI && typeof AI.getProviderLabel === 'function'
+            ? AI.getProviderLabel(saved.provider)
+            : saved.provider;
+        const model =
+          AI && typeof AI.getActiveModel === 'function' ? AI.getActiveModel(saved) : saved.provider;
+        const notice =
+          saved.provider === 'offline'
+            ? 'AI Brain set to Offline Contextual Critic.'
+            : `AI Brain saved: ${label} (${model}).`;
+        if (typeof App.showToast === 'function') {
+          App.showToast(notice, 'info');
+        }
+      }
+      close();
+    });
+
+    sel.focus();
   }
 
   function openScoreboardModal() {

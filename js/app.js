@@ -270,8 +270,14 @@
 
     const highlight = opts.highlight !== false;
     const card = document.createElement('article');
-    card.className = highlight ? 'comment-card is-new is-latest' : 'comment-card is-latest';
+    const cardClasses = ['comment-card', 'is-latest'];
+    if (highlight) cardClasses.push('is-new');
+    if (opts.variant === 'ai') cardClasses.push('commentary-card-ai');
+    card.className = cardClasses.join(' ');
     card.setAttribute('data-mood', moodId);
+    if (opts.source) {
+      card.setAttribute('data-source', String(opts.source));
+    }
 
     card.innerHTML =
       '<div class="comment-meta">' +
@@ -732,8 +738,12 @@
     const cursorEl = el('cursor-pos');
     if (cursorEl) cursorEl.textContent = `Ln ${row}, Col ${col}`;
 
-    // Check ~30-word AI roast milestone
-    if (words >= state.lastRoastWordMilestone + 30) {
+    // Check ~30-word AI roast milestone (reset downward on large deletions or clear)
+    if (words === 0) {
+      state.lastRoastWordMilestone = 0;
+    } else if (words <= state.lastRoastWordMilestone - 15) {
+      state.lastRoastWordMilestone = Math.floor(words / 30) * 30;
+    } else if (words >= 30 && words >= state.lastRoastWordMilestone + 30) {
       state.lastRoastWordMilestone = Math.floor(words / 30) * 30;
       triggerAIRoast(false);
     }
@@ -801,24 +811,65 @@
   }
 
   async function triggerAIRoast(manual = false) {
-    if (state.roastInFlight) return;
+    if (state.roastInFlight) return null;
     const AI = root.YP.AI;
     const Audio = root.YP.Audio;
     const textarea = el('editor-textarea');
-    if (!AI || !textarea) return;
+    if (!AI || !textarea) return null;
+
+    const cfg = typeof AI.getConfig === 'function' ? AI.getConfig() : null;
+    const usingCloud = Boolean(
+      cfg && (cfg.provider === 'gemini' || cfg.provider === 'openai') && cfg.apiKey
+    );
+    const telemetry = getTelemetry();
+    if (manual) {
+      state.lastRoastWordMilestone = state.words;
+    }
+
+    if (usingCloud) {
+      setStatusMessage('AI Brain is evaluating your draft...');
+    }
 
     state.roastInFlight = true;
     try {
-      const result = await AI.roast(textarea.value, state.mood, getTelemetry());
-      if (Audio) Audio.playRoastPop();
+      const roastFn = typeof AI.roast === 'function' ? AI.roast : AI.requestRoast;
+      let result;
+      try {
+        result = await roastFn(textarea.value, state.mood, telemetry);
+      } catch (err) {
+        const offlineText =
+          typeof AI.generateOfflineRoast === 'function'
+            ? AI.generateOfflineRoast(textarea.value, state.mood, telemetry)
+            : 'Interesting choice of words. Bold. Wrong, but bold.';
+        result = {
+          text: offlineText,
+          provider: 'offline',
+          fallback: true,
+          error: (err && err.message) || 'AI request failed'
+        };
+      }
+
+      const roastText = typeof result === 'string' ? result : (result && result.text) || '';
+      if (!roastText) return result;
+
+      if (Audio && typeof Audio.playRoastPop === 'function') {
+        Audio.playRoastPop();
+      }
       const tag =
-        result.provider === 'gemini'
-          ? '🧠 Gemini Roast'
-          : result.provider === 'openai'
-          ? '🧠 OpenAI Roast'
-          : '🧠 AI Critic';
-      addCommentary(result.text, { tag });
-      if (manual) showToast(result.text, 'snark');
+        result && result.provider === 'gemini'
+          ? '🧠 AI Judgment · Gemini'
+          : result && result.provider === 'openai'
+          ? '🧠 AI Judgment · OpenAI'
+          : result && result.fallback
+          ? '🧠 AI Judgment · Offline Fallback'
+          : '🧠 AI Judgment · Offline';
+      addCommentary(roastText, {
+        tag,
+        variant: 'ai',
+        source: (result && result.provider) || 'offline'
+      });
+      if (manual) showToast(roastText, 'snark');
+      return result;
     } finally {
       state.roastInFlight = false;
     }
@@ -956,9 +1007,9 @@
     if (!badge) return;
     const label =
       cfg.provider === 'gemini'
-        ? 'AI: Gemini 2.5'
+        ? `AI: ${cfg.geminiModel || 'gemini-2.5-flash'}`
         : cfg.provider === 'openai'
-        ? 'AI: GPT-4o-mini'
+        ? `AI: ${cfg.openaiModel || 'gpt-4o-mini'}`
         : 'AI: Offline Critic';
     badge.textContent = label;
   }
@@ -1436,6 +1487,7 @@
     applyFontShrinkPunishment,
     restoreNormalFont,
     insertRoastableSampleText,
+    triggerAIRoast,
     triggerAngryWordScramble,
     startGhostwriting,
     stopGhostwriting,

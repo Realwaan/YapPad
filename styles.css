@@ -1554,7 +1554,9 @@ body[data-mood="supportive"] #weather-layer::before,
   outline-offset: 1px;
 }
 
-.modal-btn:disabled {
+.modal-btn:disabled,
+.modal-input:disabled,
+.modal-select:disabled {
   opacity: 0.56;
   cursor: not-allowed;
 }
@@ -1577,6 +1579,94 @@ body[data-mood="supportive"] #weather-layer::before,
 
 .modal-btn-danger:hover:not(:disabled) {
   filter: brightness(0.92);
+}
+
+/* AI Brain Settings Modal Controls (Ticket 08) */
+.comment-card.commentary-card-ai,
+.commentary-card-ai {
+  background: linear-gradient(180deg, var(--accent-soft) 0%, var(--bg-card) 38%);
+  border-color: var(--border-strong);
+  border-left: 3px solid var(--accent-primary);
+}
+
+.ai-key-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-key-group .modal-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ai-key-toggle {
+  flex: 0 0 auto;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-ribbon);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ai-key-toggle:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent-primary);
+  color: var(--accent-ink);
+}
+
+.ai-key-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ai-field-hint {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+.ai-test-status {
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-ribbon);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ai-test-status.is-idle,
+.ai-test-status.is-loading {
+  color: var(--text-secondary);
+}
+
+.ai-test-status.is-ok {
+  border-color: var(--success);
+  background: rgba(45, 128, 76, 0.1);
+  color: var(--success);
+}
+
+.ai-test-status.is-error {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.ai-test-status-msg {
+  font-weight: 600;
+}
+
+.ai-test-status-sample {
+  margin-top: 4px;
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--text-primary);
 }
 
 /* Abandoned Desktop Screen */
