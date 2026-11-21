@@ -8,6 +8,32 @@
     'We could of used a boring editor, it is definately going to judge every single word we type in real time. ' +
     'Honestly this demo is sooo good that the the judges will remember it forever.';
 
+  const MAX_COMMENTARY_CARDS = 40;
+  const MAX_TOASTS = 4;
+  const DEFAULT_TOAST_DURATION_MS = 4000;
+  const TOAST_EXIT_MS = 240;
+  const NEW_CARD_HIGHLIGHT_MS = 1600;
+
+  const ALLOWED_TOAST_TONES = new Set([
+    'neutral',
+    'info',
+    'warning',
+    'danger',
+    'success',
+    'supportive',
+    'snark'
+  ]);
+  const TOAST_TONE_ALIASES = {
+    warn: 'warning',
+    error: 'danger'
+  };
+  const CLEAR_NOTES_SNARKS = [
+    'You cleared the margin notes, but you cannot clear your conscience.',
+    'Erasing the evidence again? Bold move. I still remember every single typo.',
+    'Three attempts to silence your critic. Censorship will not fix your prose.',
+    'Sweep them under the rug all you want — I have plenty more judgments where those came from.'
+  ];
+
   const state = {
     filename: 'untitled_regret.txt',
     dirty: false,
@@ -39,12 +65,68 @@
     remembersClose: false,
     currentIssues: [],
     fontSizePx: 15.5,
-    autocorrectFlip: 1
+    autocorrectFlip: 1,
+    clearNotesAttempts: 0
   };
 
   function el(id) {
     if (typeof document === 'undefined') return null;
     return document.getElementById(id);
+  }
+
+  function escapeHTML(str) {
+    const raw = str == null ? '' : String(str);
+    const Grammar = root.YP.Grammar;
+    if (Grammar && typeof Grammar.escapeHTML === 'function') {
+      return Grammar.escapeHTML(raw);
+    }
+    return raw
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function normalizeToastTone(rawTone) {
+    const lower = String(rawTone || 'neutral').trim().toLowerCase();
+    const mapped = TOAST_TONE_ALIASES[lower] || lower;
+    return ALLOWED_TOAST_TONES.has(mapped) ? mapped : 'neutral';
+  }
+
+  function clearToastTimers(toast) {
+    if (!toast) return;
+    if (toast._leaveTimer) {
+      root.clearTimeout(toast._leaveTimer);
+      toast._leaveTimer = null;
+    }
+    if (toast._removeTimer) {
+      root.clearTimeout(toast._removeTimer);
+      toast._removeTimer = null;
+    }
+  }
+
+  function dismissToast(toast, immediate) {
+    if (!toast) return;
+    clearToastTimers(toast);
+    if (immediate || !toast.parentNode) {
+      if (toast.parentNode) toast.parentNode.removeChild(toast);
+      return;
+    }
+    if (toast.classList && !toast.classList.contains('is-leaving')) {
+      toast.classList.add('is-leaving');
+    }
+    toast._removeTimer = root.setTimeout(() => {
+      toast._removeTimer = null;
+      if (toast.parentNode) toast.parentNode.removeChild(toast);
+    }, TOAST_EXIT_MS);
+  }
+
+  function updateCommentaryCount() {
+    const list = el('commentary-list');
+    const countEl = el('commentary-count');
+    if (!list || !countEl) return;
+    countEl.textContent = String(list.children.length);
   }
 
   function loadGrudgeState() {
@@ -79,7 +161,7 @@
     state.closeCount = 0;
     updateEscalation();
     setStatusMessage('Oh. You again. (Grudge memory wiped back to Stage 0.)');
-    showToast('Grudge memory reset to Stage 0.', 'neutral');
+    showToast('Grudge memory reset to Stage 0.', 'info');
   }
 
   function setStatusMessage(msg) {
@@ -87,53 +169,145 @@
     if (statusEl) statusEl.textContent = msg;
   }
 
-  function showToast(text, tone = 'neutral') {
+  function showToast(text, toneOrOptions) {
     const stack = el('toast-stack');
-    if (!stack) return;
-    while (stack.children.length >= 4) {
-      stack.firstElementChild.remove();
+    if (!stack) return null;
+
+    const opts =
+      toneOrOptions && typeof toneOrOptions === 'object'
+        ? toneOrOptions
+        : { tone: toneOrOptions };
+    const safeTone = normalizeToastTone(opts.tone);
+    const parsedDuration = Number(opts.duration);
+    const durationMs =
+      Number.isFinite(parsedDuration) && parsedDuration > 0
+        ? parsedDuration
+        : DEFAULT_TOAST_DURATION_MS;
+
+    // Cap visible toast stack height so floating notifications stay unobtrusive
+    while (stack.children.length >= MAX_TOASTS) {
+      dismissToast(stack.firstElementChild, true);
     }
-    const item = document.createElement('div');
-    item.className = `toast-item toast-${tone}`;
-    item.textContent = text;
-    stack.appendChild(item);
-    setTimeout(() => {
-      if (item.parentNode) item.remove();
-    }, 3900);
+
+    const toast = document.createElement('div');
+    toast.className = `yp-toast yp-toast-${safeTone}`;
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('data-tone', safeTone);
+    toast.style.setProperty('--toast-duration', `${durationMs}ms`);
+    toast.innerHTML =
+      '<span class="yp-toast-dot" aria-hidden="true"></span>' +
+      `<span class="yp-toast-text">${escapeHTML(text)}</span>` +
+      '<span class="yp-toast-progress" aria-hidden="true"></span>';
+
+    // Never steal keyboard focus or cursor selection from #editor-textarea
+    toast.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+    });
+    toast.addEventListener('click', () => {
+      dismissToast(toast, false);
+    });
+
+    stack.appendChild(toast);
+
+    const leaveDelay = Math.max(0, durationMs - TOAST_EXIT_MS);
+    toast._leaveTimer = root.setTimeout(() => {
+      toast._leaveTimer = null;
+      if (toast.parentNode && toast.classList) {
+        toast.classList.add('is-leaving');
+      }
+    }, leaveDelay);
+
+    toast._removeTimer = root.setTimeout(() => {
+      toast._removeTimer = null;
+      if (toast.parentNode) toast.parentNode.removeChild(toast);
+    }, durationMs);
+
+    return toast;
   }
 
-  function addCommentary(text, meta = {}) {
+  function addCommentary(text, options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
     const list = el('commentary-list');
-    const countEl = el('commentary-count');
     const Moods = root.YP.Moods;
-    const moodInfo = (Moods && Moods.MOODS[state.mood]) || { emoji: '😒', name: 'Passive-Aggressive' };
+    const requestedMood = opts.mood || state.mood || 'passive-aggressive';
+    const moodInfo =
+      (Moods && Moods.MOODS && Moods.MOODS[requestedMood]) ||
+      (Moods && Moods.MOODS && Moods.MOODS['passive-aggressive']) || {
+        id: 'passive-aggressive',
+        emoji: '😒',
+        name: 'Passive-Aggressive',
+        label: '😒 Passive-Aggressive'
+      };
+    const moodId = moodInfo.id || String(requestedMood);
+    const moodBadge = moodInfo.label || `${moodInfo.emoji || ''} ${moodInfo.name || moodId}`.trim();
+    const categoryTag = opts.category || opts.tag || 'Margin Note';
 
-    setStatusMessage(text);
-    if (!list) return;
+    if (opts.updateStatus !== false) {
+      setStatusMessage(text);
+    }
+    if (!list) return null;
 
-    const card = document.createElement('article');
-    card.className = 'commentary-card';
-
-    const tag = meta.tag || moodInfo.name;
     const now = new Date();
-    const timeStr = now.toTimeString().slice(0, 8);
+    const timestamp = now.toTimeString().slice(0, 8);
+    const isoTime = now.toISOString();
 
-    const Grammar = root.YP.Grammar;
-    const esc = Grammar ? Grammar.escapeHTML : (s) => String(s);
+    const prevLatest = list.querySelector('.comment-card.is-latest');
+    if (prevLatest) {
+      prevLatest.classList.remove('is-latest');
+    }
 
-    card.innerHTML = `
-      <div class="commentary-meta">
-        <span class="commentary-tag">${esc(moodInfo.emoji)} ${esc(tag)}</span>
-        <span>${esc(timeStr)}</span>
-      </div>
-      <div class="commentary-text">${esc(text)}</div>
-    `;
+    const highlight = opts.highlight !== false;
+    const card = document.createElement('article');
+    card.className = highlight ? 'comment-card is-new is-latest' : 'comment-card is-latest';
+    card.setAttribute('data-mood', moodId);
+
+    card.innerHTML =
+      '<div class="comment-meta">' +
+      '<div class="comment-badges">' +
+      `<span class="comment-mood-badge">${escapeHTML(moodBadge)}</span>` +
+      `<span class="comment-category-tag">${escapeHTML(categoryTag)}</span>` +
+      '</div>' +
+      `<time class="comment-time" datetime="${escapeHTML(isoTime)}">${escapeHTML(timestamp)}</time>` +
+      '</div>' +
+      `<p class="comment-body">${escapeHTML(text)}</p>`;
 
     list.prepend(card);
-    while (list.children.length > 30) {
+    while (list.children.length > MAX_COMMENTARY_CARDS) {
       list.lastElementChild.remove();
     }
-    if (countEl) countEl.textContent = String(list.children.length);
+    updateCommentaryCount();
+
+    if (highlight) {
+      root.setTimeout(() => {
+        if (card.classList) card.classList.remove('is-new');
+      }, NEW_CARD_HIGHLIGHT_MS);
+    }
+
+    return card;
+  }
+
+  function clearCommentary() {
+    const list = el('commentary-list');
+    if (!list) return null;
+    list.innerHTML = '';
+
+    state.clearNotesAttempts += 1;
+    const attempt = state.clearNotesAttempts;
+    const snark =
+      attempt <= CLEAR_NOTES_SNARKS.length
+        ? CLEAR_NOTES_SNARKS[attempt - 1]
+        : `Clearing the margin notes ${attempt} times still will not make your draft any better.`;
+
+    if (root.YP.Audio && typeof root.YP.Audio.playGuiltPop === 'function') {
+      root.YP.Audio.playGuiltPop();
+    }
+
+    const card = addCommentary(snark, {
+      category: 'Nice Try',
+      tag: 'Nice Try'
+    });
+    showToast(snark, 'snark');
+    return card;
   }
 
   function applyFontShrinkPunishment(errorCount) {
@@ -173,7 +347,7 @@
       ? Moods.getLine(state.mood, 'restoreFont')
       : 'Fine. Here is your 15.5px font back. Try not to embarrass it.';
     addCommentary(line, { tag: 'Font Mercy' });
-    showToast(line);
+    showToast(line, 'supportive');
   }
 
   function updateWeatherLayer() {
@@ -328,7 +502,7 @@
       ? Moods.getLine('angry', 'scrambleApology')
       : 'Ugh. I got mad and scrambled a word. Hit Ctrl+Z.';
     addCommentary(`Scrambled "${word}" → "${finalWord}". ${apology}`, { tag: '😡 Word Scrambler' });
-    showToast(`😡 Scrambled "${word}" → "${finalWord}"! (Ctrl+Z to undo)`);
+    showToast(`😡 Scrambled "${word}" → "${finalWord}"! (Ctrl+Z to undo)`, 'danger');
     return true;
   }
 
@@ -494,7 +668,7 @@
           ? '🧠 OpenAI Roast'
           : '🧠 AI Critic';
       addCommentary(result.text, { tag });
-      if (manual) showToast(result.text);
+      if (manual) showToast(result.text, 'snark');
     } finally {
       state.roastInFlight = false;
     }
@@ -716,12 +890,11 @@
     // Clear commentary button
     const clearNotesBtn = el('btn-clear-notes');
     if (clearNotesBtn) {
+      clearNotesBtn.addEventListener('mousedown', (event) => {
+        event.preventDefault();
+      });
       clearNotesBtn.addEventListener('click', () => {
-        const list = el('commentary-list');
-        if (list) list.innerHTML = '';
-        addCommentary('You cleared the margin notes, but you cannot clear your conscience.', {
-          tag: 'Nice Try'
-        });
+        clearCommentary();
       });
     }
 
@@ -968,6 +1141,9 @@
     // Global keyboard shortcuts
     if (typeof window !== 'undefined') {
       window.addEventListener('keydown', (e) => {
+        if (root.YP.Modals && typeof root.YP.Modals.isOpen === 'function' && root.YP.Modals.isOpen()) {
+          return;
+        }
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
           e.preventDefault();
           handleAction('file-save');
@@ -1027,9 +1203,9 @@
 
     if (state.remembersClose) {
       const msg = `Oh. You again. I still remember the ${state.closeCount} time${state.closeCount === 1 ? '' : 's'} you closed me.`;
-      addCommentary(msg, { tag: '👁️ Grudge Memory' });
+      addCommentary(msg, { category: 'Grudge Memory', tag: '👁️ Grudge Memory', highlight: false });
     } else {
-      addCommentary('Oh. You again.', { tag: '😒 Startup' });
+      addCommentary('Oh. You again.', { category: 'Startup', tag: 'Startup', highlight: false });
     }
 
     state.telemetryTimer = setInterval(tickTelemetry, 450);
@@ -1053,8 +1229,12 @@
   }
 
   root.YP.App = {
+    MAX_COMMENTARY_CARDS,
+    MAX_TOASTS,
+    DEFAULT_TOAST_DURATION_MS,
     state,
     init,
+    escapeHTML,
     setMood,
     runGrammarCheck,
     applyFontShrinkPunishment,
@@ -1065,13 +1245,14 @@
     stopGhostwriting,
     resetGrudgeMemory,
     addCommentary,
+    clearCommentary,
     showToast,
     getTelemetry,
     updateAIBadge,
     onSaveCompleted(note) {
       state.dirty = false;
-      addCommentary(note, { tag: '💾 Saved' });
-      showToast(note);
+      addCommentary(note, { category: 'Saved', tag: '💾 Saved' });
+      showToast(note, 'success');
     }
   };
 })();
