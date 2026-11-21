@@ -707,6 +707,7 @@
         if (root.YP.Audio) root.YP.Audio.playCornerZip();
         addCommentary('I won\'t fix that. You need to learn.', { tag: '✨ Autocorrect Refused' });
       };
+      autoBtn.addEventListener('mousedown', (e) => e.preventDefault());
       autoBtn.addEventListener('mouseenter', dodgeAutocorrect);
       autoBtn.addEventListener('click', dodgeAutocorrect);
     }
