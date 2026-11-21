@@ -197,14 +197,16 @@ body {
 /* Shake animation hook for typing-speed panic (Ticket 03) */
 @keyframes yp-panic-shake {
   0%, 100% { transform: translate3d(0, 0, 0); }
-  20% { transform: translate3d(-4px, 1px, 0); }
-  40% { transform: translate3d(4px, -1px, 0); }
-  60% { transform: translate3d(-3px, -1px, 0); }
-  80% { transform: translate3d(3px, 1px, 0); }
+  15% { transform: translate3d(-6px, 2px, 0); }
+  30% { transform: translate3d(6px, -2px, 0); }
+  45% { transform: translate3d(-5px, -1px, 0); }
+  60% { transform: translate3d(5px, 2px, 0); }
+  75% { transform: translate3d(-3px, -1px, 0); }
+  90% { transform: translate3d(2px, 1px, 0); }
 }
 
 .is-shaking {
-  animation: yp-panic-shake 0.34s ease-in-out;
+  animation: yp-panic-shake 0.42s cubic-bezier(0.36, 0.07, 0.19, 0.97);
 }
 
 /* ==========================================================================
@@ -489,10 +491,54 @@ body {
   color: var(--accent);
 }
 
+.metric-chip-wpm {
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.metric-chip-wpm .metric-value {
+  min-width: 2.2ch;
+  text-align: right;
+}
+
+.metric-chip-wpm[data-speed="slow"] {
+  background: var(--warning-bg);
+  border-color: rgba(180, 105, 14, 0.38);
+}
+
+.metric-chip-wpm[data-speed="slow"] .metric-value,
+.metric-chip-wpm[data-speed="slow"] .wpm-sparkline {
+  color: var(--warning-color);
+}
+
+.metric-chip-wpm[data-speed="fast"] {
+  background: var(--error-bg);
+  border-color: rgba(201, 59, 43, 0.5);
+}
+
+.metric-chip-wpm[data-speed="fast"] .metric-value,
+.metric-chip-wpm[data-speed="fast"] .wpm-sparkline {
+  color: var(--error-color);
+}
+
 .wpm-sparkline {
   display: block;
   color: var(--accent);
-  opacity: 0.85;
+  opacity: 0.9;
+  overflow: visible;
+}
+
+.wpm-sparkline-area {
+  fill: currentColor;
+  opacity: 0.14;
+}
+
+.wpm-sparkline-dot {
+  fill: currentColor;
+}
+
+.metric-chip-wpm[data-speed="idle"] .wpm-sparkline {
+  color: var(--ink-muted);
+  opacity: 0.55;
 }
 
 .telemetry-actions {

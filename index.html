@@ -168,11 +168,13 @@
     <!-- Telemetry Ribbon -->
     <section id="telemetry-ribbon" aria-label="Live writing telemetry">
       <div class="telemetry-metrics">
-        <div class="metric-chip" title="Rolling words per minute">
+        <div id="metric-chip-wpm" class="metric-chip metric-chip-wpm" data-speed="idle" title="Rolling words per minute (6.5s window)">
           <span class="metric-label">WPM</span>
           <strong id="metric-wpm" class="metric-value">0</strong>
           <svg id="wpm-sparkline" class="wpm-sparkline" viewBox="0 0 56 16" width="56" height="16" aria-hidden="true">
-            <polyline id="wpm-sparkline-line" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" points="0,14 56,14"/>
+            <polygon id="wpm-sparkline-area" class="wpm-sparkline-area" points="1,14 55,14 55,15 1,15"/>
+            <polyline id="wpm-sparkline-line" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" points="1,14 55,14"/>
+            <circle id="wpm-sparkline-dot" class="wpm-sparkline-dot" cx="55" cy="14" r="1.6"/>
           </svg>
         </div>
 

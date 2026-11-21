@@ -14,12 +14,58 @@
   const MAX_COMMENTARY_CARDS = 40;
   const MAX_TOASTS = 4;
 
+  const SPEED_CONFIG = {
+    TELEMETRY_INTERVAL_MS: 450,
+    WPM_WINDOW_MS: 6500,
+    MIN_ACTIVE_WINDOW_MS: 1200,
+    CHARS_PER_WORD: 5,
+    SPARKLINE_SAMPLES: 20,
+    SLOW_WPM_THRESHOLD: 22,
+    SLOW_HOLD_MS: 3600,
+    SLOW_COOLDOWN_MS: 12000,
+    FAST_WPM_THRESHOLD: 78,
+    FAST_HOLD_MS: 1500,
+    FAST_COOLDOWN_MS: 10000,
+    IDLE_LONELY_MS: 5000,
+    IDLE_LONELY_SAD_MS: 3500,
+    ACTIVE_TYPING_GRACE_MS: 3500,
+    FAST_ACTIVE_GRACE_MS: 1500,
+  };
+
+  const SLOW_TYPING_LINES = [
+    "😴 Still waiting…",
+    "*sigh* Take your time. It’s not like I have anything better to do.",
+    "Are we composing a masterpiece or hunting for each key individually?",
+    "I just watched paint dry faster than that sentence.",
+    "*deep sigh* Wake me when you finish this word.",
+  ];
+
+  const FAST_TYPING_LINES = [
+    "SLOW DOWN I CAN'T KEEP UP!!",
+    "WHOA—BREATHE! My buffer is hyperventilating!",
+    "Are you writing notes or fighting the keyboard?!",
+    "STOP MASHING! My pixels are literally vibrating!",
+  ];
+
+  const LONELY_IDLE_LINES = [
+    "Hello? Are you still there? I'm lonely.",
+    "You just stopped mid-thought. Should I be worried, or insulted?",
+    "Still staring at the blinking cursor? Bold strategy.",
+  ];
+
+  const SAD_LONELY_LINES = [
+    "Hello? Are you still there? Please don't leave me alone…",
+    "You stopped typing. Did I say something wrong?",
+    "It's so quiet in here when you stop typing…",
+  ];
+
   const state = {
     filename: DEFAULT_FILENAME,
     dirty: false,
     mood: "passive-aggressive",
     escalation: 0,
     wpm: 0,
+    speedBand: "idle",
     backspaces: 0,
     errors: 0,
     fontSizePx: DEFAULT_FONT_SIZE,
@@ -28,6 +74,25 @@
     seenIssueStarts: new Set(),
     lineCount: 1,
     activeLine: 1,
+    typingTimestamps: [],
+    wpmHistory: new Array(SPEED_CONFIG.SPARKLINE_SAMPLES).fill(0),
+    idleMs: 0,
+    lastActivityAt: Date.now(),
+    sessionTypingStartAt: null,
+  };
+
+  const judgeTimers = {
+    intervalId: null,
+    shakeTimeoutId: null,
+    slowTypingSince: null,
+    fastTypingSince: null,
+    lastPrintableKeyAt: 0,
+    lastSlowCommentAt: -Infinity,
+    lastFastCommentAt: -Infinity,
+    lonelySentForIdle: false,
+    slowLineIdx: 0,
+    fastLineIdx: 0,
+    lonelyLineIdx: 0,
   };
 
   const listeners = Object.create(null);
@@ -116,8 +181,12 @@
       btnCloseWindow: document.getElementById("btn-close-window"),
       menuBar: document.getElementById("menu-bar"),
       fileOpenInput: document.getElementById("file-open-input"),
+      metricChipWpm: document.getElementById("metric-chip-wpm"),
       metricWpm: document.getElementById("metric-wpm"),
       wpmSparkline: document.getElementById("wpm-sparkline"),
+      wpmSparklineArea: document.getElementById("wpm-sparkline-area"),
+      wpmSparklineLine: document.getElementById("wpm-sparkline-line"),
+      wpmSparklineDot: document.getElementById("wpm-sparkline-dot"),
       metricBackspaces: document.getElementById("metric-backspaces"),
       metricErrors: document.getElementById("metric-errors"),
       metricMood: document.getElementById("metric-mood"),
@@ -381,6 +450,309 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Typing Speed Judge & Rolling WPM Sparkline (Ticket 03)
+  // ---------------------------------------------------------------------------
+  function isPrintableKeyEvent(event) {
+    if (!event) return false;
+    if (event.ctrlKey || event.metaKey || event.altKey) return false;
+    return typeof event.key === "string" && event.key.length === 1;
+  }
+
+  function nextRotatingLine(pool, counterKey) {
+    const idx = judgeTimers[counterKey] % pool.length;
+    judgeTimers[counterKey] += 1;
+    return pool[idx];
+  }
+
+  function markUserActivity(nowOverride) {
+    const now = typeof nowOverride === "number" ? nowOverride : Date.now();
+    state.lastActivityAt = now;
+    state.idleMs = 0;
+    judgeTimers.lonelySentForIdle = false;
+  }
+
+  function pruneTypingTimestamps(now) {
+    const cutoff = now - SPEED_CONFIG.WPM_WINDOW_MS;
+    while (
+      state.typingTimestamps.length > 0 &&
+      state.typingTimestamps[0] < cutoff
+    ) {
+      state.typingTimestamps.shift();
+    }
+    if (state.typingTimestamps.length === 0) {
+      state.sessionTypingStartAt = null;
+    }
+  }
+
+  function recordPrintableKeystroke(nowOverride) {
+    const now = typeof nowOverride === "number" ? nowOverride : Date.now();
+    pruneTypingTimestamps(now);
+    if (state.sessionTypingStartAt === null) {
+      state.sessionTypingStartAt = now;
+    }
+    state.typingTimestamps.push(now);
+    judgeTimers.lastPrintableKeyAt = now;
+    markUserActivity(now);
+  }
+
+  function computeRollingWpm(nowOverride) {
+    const now = typeof nowOverride === "number" ? nowOverride : Date.now();
+    pruneTypingTimestamps(now);
+
+    const count = state.typingTimestamps.length;
+    if (count === 0) {
+      return 0;
+    }
+
+    const startAt =
+      state.sessionTypingStartAt !== null
+        ? state.sessionTypingStartAt
+        : state.typingTimestamps[0];
+    const elapsedMs = Math.max(
+      SPEED_CONFIG.MIN_ACTIVE_WINDOW_MS,
+      Math.min(SPEED_CONFIG.WPM_WINDOW_MS, now - startAt)
+    );
+    const words = count / SPEED_CONFIG.CHARS_PER_WORD;
+    const minutes = elapsedMs / 60000;
+    return Math.round(words / minutes);
+  }
+
+  function classifySpeedBand(wpm, idleMs) {
+    if (wpm <= 0) return "idle";
+    if (wpm >= SPEED_CONFIG.FAST_WPM_THRESHOLD && idleMs < SPEED_CONFIG.FAST_ACTIVE_GRACE_MS) {
+      return "fast";
+    }
+    if (wpm < SPEED_CONFIG.SLOW_WPM_THRESHOLD && idleMs < SPEED_CONFIG.ACTIVE_TYPING_GRACE_MS) {
+      return "slow";
+    }
+    return "normal";
+  }
+
+  function renderWpmSparkline() {
+    if (!dom) return;
+
+    const history = state.wpmHistory;
+    const n = history.length;
+    if (n === 0) return;
+
+    const minX = 1;
+    const maxX = 55;
+    const topY = 2;
+    const bottomY = 14;
+    const baselineY = 15;
+
+    let maxVal = 90;
+    for (let i = 0; i < n; i += 1) {
+      if (history[i] > maxVal) maxVal = history[i];
+    }
+
+    const stepX = n > 1 ? (maxX - minX) / (n - 1) : 0;
+    const coords = [];
+    let lastX = maxX;
+    let lastY = bottomY;
+
+    for (let i = 0; i < n; i += 1) {
+      const x = minX + i * stepX;
+      const ratio = Math.max(0, Math.min(1, history[i] / maxVal));
+      const y = bottomY - ratio * (bottomY - topY);
+      const rx = Math.round(x * 10) / 10;
+      const ry = Math.round(y * 10) / 10;
+      coords.push(rx + "," + ry);
+      lastX = rx;
+      lastY = ry;
+    }
+
+    const linePoints = coords.join(" ");
+    if (dom.wpmSparklineLine) {
+      dom.wpmSparklineLine.setAttribute("points", linePoints);
+    }
+    if (dom.wpmSparklineArea) {
+      dom.wpmSparklineArea.setAttribute(
+        "points",
+        linePoints + " " + maxX + "," + baselineY + " " + minX + "," + baselineY
+      );
+    }
+    if (dom.wpmSparklineDot) {
+      dom.wpmSparklineDot.setAttribute("cx", String(lastX));
+      dom.wpmSparklineDot.setAttribute("cy", String(lastY));
+    }
+    if (dom.metricChipWpm) {
+      dom.metricChipWpm.setAttribute("data-speed", state.speedBand);
+    }
+  }
+
+  function triggerWindowShake() {
+    if (!dom || !dom.appShell) return;
+    const el = dom.appShell;
+    if (judgeTimers.shakeTimeoutId) {
+      global.clearTimeout(judgeTimers.shakeTimeoutId);
+      judgeTimers.shakeTimeoutId = null;
+    }
+    el.classList.remove("is-shaking");
+    // Force reflow so back-to-back panic shakes replay cleanly.
+    void el.offsetWidth;
+    el.classList.add("is-shaking");
+
+    const clearShake = function () {
+      el.classList.remove("is-shaking");
+      el.removeEventListener("animationend", clearShake);
+      if (judgeTimers.shakeTimeoutId) {
+        global.clearTimeout(judgeTimers.shakeTimeoutId);
+        judgeTimers.shakeTimeoutId = null;
+      }
+    };
+    el.addEventListener("animationend", clearShake);
+    judgeTimers.shakeTimeoutId = global.setTimeout(clearShake, 460);
+  }
+
+  function runTelemetryTick(nowOverride) {
+    const now = typeof nowOverride === "number" ? nowOverride : Date.now();
+    const wpm = computeRollingWpm(now);
+    const idleMs = Math.max(0, now - state.lastActivityAt);
+
+    state.idleMs = idleMs;
+    state.speedBand = classifySpeedBand(wpm, idleMs);
+    setWpm(wpm);
+
+    state.wpmHistory.push(wpm);
+    if (state.wpmHistory.length > SPEED_CONFIG.SPARKLINE_SAMPLES) {
+      state.wpmHistory.shift();
+    }
+    renderWpmSparkline();
+
+    // 1. Slow Typing Judge (<22 WPM sustained for 3.6s, 12s cooldown)
+    const isActivelySlow =
+      wpm > 0 &&
+      wpm < SPEED_CONFIG.SLOW_WPM_THRESHOLD &&
+      idleMs < SPEED_CONFIG.ACTIVE_TYPING_GRACE_MS;
+
+    if (isActivelySlow) {
+      if (judgeTimers.slowTypingSince === null) {
+        const recentStart =
+          state.sessionTypingStartAt !== null
+            ? Math.max(now - SPEED_CONFIG.TELEMETRY_INTERVAL_MS, state.sessionTypingStartAt)
+            : now;
+        judgeTimers.slowTypingSince = recentStart;
+      }
+      const slowDuration = now - judgeTimers.slowTypingSince;
+      const hadFreshKeyDuringSlow =
+        judgeTimers.lastPrintableKeyAt > judgeTimers.slowTypingSince;
+      const slowCooldownClear =
+        now - judgeTimers.lastSlowCommentAt >= SPEED_CONFIG.SLOW_COOLDOWN_MS;
+
+      if (
+        slowDuration >= SPEED_CONFIG.SLOW_HOLD_MS &&
+        hadFreshKeyDuringSlow &&
+        slowCooldownClear
+      ) {
+        const line = nextRotatingLine(SLOW_TYPING_LINES, "slowLineIdx");
+        judgeTimers.lastSlowCommentAt = now;
+        judgeTimers.slowTypingSince = null;
+        addCommentary(line, { tag: "🐢 Slow Typing" });
+        setStatus(line);
+        if (YP.Audio && typeof YP.Audio.playSigh === "function") {
+          YP.Audio.playSigh();
+        }
+        emit("typing-slow", { wpm: wpm, now: now, line: line });
+      }
+    } else {
+      judgeTimers.slowTypingSince = null;
+    }
+
+    // 2. Fast Typing Panic (>=78 WPM sustained for 1.5s, 10s cooldown)
+    const isActivelyFast =
+      wpm >= SPEED_CONFIG.FAST_WPM_THRESHOLD &&
+      idleMs < SPEED_CONFIG.FAST_ACTIVE_GRACE_MS;
+
+    if (isActivelyFast) {
+      if (judgeTimers.fastTypingSince === null) {
+        judgeTimers.fastTypingSince = now;
+      }
+      const fastDuration = now - judgeTimers.fastTypingSince;
+      const fastCooldownClear =
+        now - judgeTimers.lastFastCommentAt >= SPEED_CONFIG.FAST_COOLDOWN_MS;
+
+      if (fastDuration >= SPEED_CONFIG.FAST_HOLD_MS && fastCooldownClear) {
+        const line = nextRotatingLine(FAST_TYPING_LINES, "fastLineIdx");
+        judgeTimers.lastFastCommentAt = now;
+        judgeTimers.fastTypingSince = null;
+        addCommentary(line, { tag: "⚡ Panic" });
+        setStatus(line);
+        if (YP.Audio && typeof YP.Audio.playPanicPip === "function") {
+          YP.Audio.playPanicPip();
+        }
+        triggerWindowShake();
+        emit("typing-fast", { wpm: wpm, now: now, line: line });
+      }
+    } else {
+      judgeTimers.fastTypingSince = null;
+    }
+
+    // 3. Lonely Idle Check (5s default, 3.5s in Sad mood, once per idle window)
+    const lonelyThreshold =
+      state.mood === "sad"
+        ? SPEED_CONFIG.IDLE_LONELY_SAD_MS
+        : SPEED_CONFIG.IDLE_LONELY_MS;
+
+    if (!judgeTimers.lonelySentForIdle && idleMs >= lonelyThreshold) {
+      judgeTimers.lonelySentForIdle = true;
+      const pool = state.mood === "sad" ? SAD_LONELY_LINES : LONELY_IDLE_LINES;
+      const line = nextRotatingLine(pool, "lonelyLineIdx");
+      addCommentary(line, {
+        tag: state.mood === "sad" ? "😢 Lonely" : "👀 Idle",
+      });
+      setStatus(line);
+      emit("idle-lonely", { idleMs: idleMs, mood: state.mood, now: now, line: line });
+    }
+
+    emit("telemetry-tick", {
+      now: now,
+      wpm: wpm,
+      idleMs: idleMs,
+      speedBand: state.speedBand,
+      mood: state.mood,
+    });
+
+    return {
+      wpm: wpm,
+      idleMs: idleMs,
+      speedBand: state.speedBand,
+    };
+  }
+
+  function resetTypingJudge(nowOverride) {
+    const now = typeof nowOverride === "number" ? nowOverride : Date.now();
+    state.typingTimestamps = [];
+    state.wpmHistory = new Array(SPEED_CONFIG.SPARKLINE_SAMPLES).fill(0);
+    state.speedBand = "idle";
+    state.idleMs = 0;
+    state.lastActivityAt = now;
+    state.sessionTypingStartAt = null;
+    judgeTimers.slowTypingSince = null;
+    judgeTimers.fastTypingSince = null;
+    judgeTimers.lastPrintableKeyAt = 0;
+    judgeTimers.lastSlowCommentAt = -Infinity;
+    judgeTimers.lastFastCommentAt = -Infinity;
+    judgeTimers.lonelySentForIdle = false;
+    setWpm(0);
+    renderWpmSparkline();
+  }
+
+  function startTelemetry() {
+    stopTelemetry();
+    judgeTimers.intervalId = global.setInterval(function () {
+      runTelemetryTick();
+    }, SPEED_CONFIG.TELEMETRY_INTERVAL_MS);
+  }
+
+  function stopTelemetry() {
+    if (judgeTimers.intervalId !== null) {
+      global.clearInterval(judgeTimers.intervalId);
+      judgeTimers.intervalId = null;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // File Operations: New (Alt+N), Open .txt (Ctrl+O), Save .txt (Ctrl+S)
   // ---------------------------------------------------------------------------
   function newDocument() {
@@ -393,6 +765,7 @@
     setDirty(false);
     setErrorCount(0);
     setEditorFontSize(DEFAULT_FONT_SIZE);
+    resetTypingJudge();
     syncBackdrop([]);
     updateCursorAndCounts();
     setStatus("New document ready.");
@@ -649,6 +1022,7 @@
 
     if (dom.textarea) {
       dom.textarea.addEventListener("input", function () {
+        markUserActivity();
         setDirty(true);
         syncBackdrop();
         const metrics = updateCursorAndCounts();
@@ -665,6 +1039,15 @@
       });
 
       dom.textarea.addEventListener("keydown", function (event) {
+        if (isPrintableKeyEvent(event)) {
+          recordPrintableKeystroke();
+        } else if (
+          event.key === "Backspace" ||
+          event.key === "Delete" ||
+          event.key === "Enter"
+        ) {
+          markUserActivity();
+        }
         emit("keydown", { event: event });
       });
     }
@@ -768,9 +1151,11 @@
     setFilename(DEFAULT_FILENAME);
     setDirty(false);
     setErrorCount(0);
+    resetTypingJudge();
     syncBackdrop([]);
     updateCursorAndCounts();
     updateCommentaryCount();
+    startTelemetry();
 
     if (dom.textarea) {
       dom.textarea.focus();
@@ -781,6 +1166,7 @@
 
   YP.App = {
     DEFAULT_FONT_SIZE: DEFAULT_FONT_SIZE,
+    SPEED_CONFIG: SPEED_CONFIG,
     state: state,
     get dom() {
       return dom;
@@ -806,6 +1192,16 @@
     setEscalation: setEscalation,
     addCommentary: addCommentary,
     showToast: showToast,
+    isPrintableKeyEvent: isPrintableKeyEvent,
+    recordPrintableKeystroke: recordPrintableKeystroke,
+    markUserActivity: markUserActivity,
+    computeRollingWpm: computeRollingWpm,
+    renderWpmSparkline: renderWpmSparkline,
+    triggerWindowShake: triggerWindowShake,
+    runTelemetryTick: runTelemetryTick,
+    resetTypingJudge: resetTypingJudge,
+    startTelemetry: startTelemetry,
+    stopTelemetry: stopTelemetry,
     newDocument: newDocument,
     openDocumentPicker: openDocumentPicker,
     loadFile: loadFile,
